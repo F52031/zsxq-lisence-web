@@ -4,8 +4,38 @@ let config = {
     adminKey: 'ADMIN-KEY-2025'
 };
 
-// 页面加载
-window.onload = () => {
+// 管理密码（可以修改为你想要的密码）
+const ADMIN_PASSWORD = 'zsxq2025';
+
+// 检查登录状态
+function checkLogin() {
+    return sessionStorage.getItem('adminLoggedIn') === 'true';
+}
+
+// 登录
+function doLogin() {
+    const password = document.getElementById('loginPassword').value;
+    const errorEl = document.getElementById('loginError');
+    
+    if (password === ADMIN_PASSWORD) {
+        sessionStorage.setItem('adminLoggedIn', 'true');
+        document.getElementById('loginOverlay').classList.add('hidden');
+        errorEl.textContent = '';
+        initApp();
+    } else {
+        errorEl.textContent = '密码错误，请重试';
+        document.getElementById('loginPassword').value = '';
+    }
+}
+
+// 退出登录
+function logout() {
+    sessionStorage.removeItem('adminLoggedIn');
+    location.reload();
+}
+
+// 初始化应用
+function initApp() {
     const saved = localStorage.getItem('adminConfig');
     if (saved) {
         const savedConfig = JSON.parse(saved);
@@ -25,6 +55,14 @@ window.onload = () => {
     const validPages = ['dashboard', 'licenses', 'devices', 'review', 'logs', 'settings'];
     const pageName = validPages.includes(hash) ? hash : 'dashboard';
     showPageByName(pageName);
+}
+
+// 页面加载
+window.onload = () => {
+    if (checkLogin()) {
+        document.getElementById('loginOverlay').classList.add('hidden');
+        initApp();
+    }
 };
 
 // 监听浏览器前进后退
