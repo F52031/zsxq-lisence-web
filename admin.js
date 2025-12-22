@@ -16,7 +16,7 @@ function checkLogin() {
 function doLogin() {
     const password = document.getElementById('loginPassword').value;
     const errorEl = document.getElementById('loginError');
-    
+
     if (password === ADMIN_PASSWORD) {
         sessionStorage.setItem('adminLoggedIn', 'true');
         document.getElementById('loginOverlay').classList.add('hidden');
@@ -49,10 +49,10 @@ function initApp() {
     }
     document.getElementById('apiUrl').value = config.apiUrl;
     document.getElementById('adminKey').value = config.adminKey;
-    
+
     // 根据 URL hash 恢复页面状态
     const hash = window.location.hash.replace('#', '') || 'dashboard';
-    const validPages = ['dashboard', 'licenses', 'devices', 'review', 'logs', 'settings'];
+    const validPages = ['dashboard', 'licenses', 'devices', 'review', 'logs', 'settings', 'debug'];
     const pageName = validPages.includes(hash) ? hash : 'dashboard';
     showPageByName(pageName);
 }
@@ -68,7 +68,7 @@ window.onload = () => {
 // 监听浏览器前进后退
 window.onhashchange = () => {
     const hash = window.location.hash.replace('#', '') || 'dashboard';
-    const validPages = ['dashboard', 'licenses', 'devices', 'review', 'logs', 'settings'];
+    const validPages = ['dashboard', 'licenses', 'devices', 'review', 'logs', 'settings', 'debug'];
     if (validPages.includes(hash)) {
         showPageByName(hash);
     }
@@ -78,12 +78,12 @@ window.onhashchange = () => {
 function showPageByName(pageName) {
     document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
     document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
-    
+
     // 激活对应的导航项
-    const navItem = document.querySelector(`.nav-item[href="#${pageName}"]`) || 
-                    document.querySelector(`.nav-item[onclick*="'${pageName}'"]`);
+    const navItem = document.querySelector(`.nav-item[href="#${pageName}"]`) ||
+        document.querySelector(`.nav-item[onclick*="'${pageName}'"]`);
     if (navItem) navItem.classList.add('active');
-    
+
     document.getElementById(pageName).classList.add('active');
 
     const titles = {
@@ -92,7 +92,8 @@ function showPageByName(pageName) {
         devices: '设备管理',
         review: '激活审核',
         logs: '操作日志',
-        settings: '系统设置'
+        settings: '系统设置',
+        debug: '密钥调试'
     };
     document.getElementById('pageTitle').textContent = titles[pageName];
 
@@ -1411,5 +1412,527 @@ async function manualBanIP() {
         loadRejectedIPs();
     } else {
         showMessage(result.error || '封禁失败', 'error');
+    }
+}
+
+// ========== 密钥调试功能 ==========
+
+// 当前测试使用的随机数据
+let debugCurrentTestIP = '';
+let debugCurrentTestDevice = '';
+
+// 生成随机 IP
+function debugGenerateRandomIP() {
+    return `${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`;
+}
+
+// 生成随机设备ID（64位十六进制）
+function debugGenerateRandomDeviceId() {
+    let result = '';
+    const chars = '0123456789abcdef';
+    for (let i = 0; i < 64; i++) {
+        result += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return result;
+}
+
+// 重新生成测试数据
+function debugRegenerateTestData() {
+    debugCurrentTestIP = debugGenerateRandomIP();
+    debugCurrentTestDevice = debugGenerateRandomDeviceId();
+    debugUpdateTestInfo();
+    showMessage('已生成新的随机测试数据', 'success');
+}
+
+// 更新显示的测试信息
+function debugUpdateTestInfo() {
+    document.getElementById('debugTestInfo').style.display = 'block';
+    document.getElementById('debugCurrentIP').textContent = debugCurrentTestIP;
+    document.getElementById('debugCurrentDevice').textContent = debugCurrentTestDevice.substring(0, 16) + '...';
+}
+
+// 初始化调试数据（页面加载时）
+function initDebugData() {
+    if (!debugCurrentTestIP) {
+        debugCurrentTestIP = debugGenerateRandomIP();
+        debugCurrentTestDevice = debugGenerateRandomDeviceId();
+    }
+}
+
+// 获取调试配置
+function getDebugConfig() {
+    return {
+        apiUrl: document.getElementById('debugApiUrl')?.value || config.apiUrl,
+        adminKey: document.getElementById('debugAdminKey')?.value || config.adminKey
+    };
+}
+
+// 调试 API 请求（管理员）
+async function debugApiRequest(action, data = {}) {
+    const debugConfig = getDebugConfig();
+    try {
+        const response = await fetch(debugConfig.apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, adminKey: debugConfig.adminKey, ...data })
+        });
+        return await response.json();
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+// 模拟客户端请求（带随机IP和设备ID）
+async function debugClientRequest(action, data = {}) {
+    const debugConfig = getDebugConfig();
+
+    const requestData = {
+        action,
+        ...data,
+        machineId: debugCurrentTestDevice,
+        testIP: debugCurrentTestIP
+    };
+
+    try {
+        const response = await fetch(debugConfig.apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Test-IP': debugCurrentTestIP
+            },
+            body: JSON.stringify(requestData)
+        });
+        return await response.json();
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+// 设置结果框样式
+function setDebugResultStyle(resultEl, success) {
+    if (success) {
+        resultEl.style.background = '#d4edda';
+        resultEl.style.color = '#155724';
+    } else {
+        resultEl.style.background = '#f8d7da';
+        resultEl.style.color = '#721c24';
+    }
+}
+
+// 测试激活
+async function debugTestValidate() {
+    initDebugData();
+    debugUpdateTestInfo();
+
+    const license = document.getElementById('debugTestLicense').value.trim();
+    if (!license) {
+        showMessage('请输入测试密钥', 'error');
+        return;
+    }
+
+    const result = document.getElementById('debugTestResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = `正在测试激活...\n\n密钥: ${license}\nIP: ${debugCurrentTestIP}\n设备ID: ${debugCurrentTestDevice.substring(0, 16)}...`;
+
+    const response = await debugClientRequest('validate', { license });
+
+    setDebugResultStyle(result, response.success);
+    result.textContent = `【激活测试结果】\n\n密钥: ${license}\nIP: ${debugCurrentTestIP}\n设备ID: ${debugCurrentTestDevice.substring(0, 16)}...\n\n${JSON.stringify(response, null, 2)}`;
+}
+
+// 测试开始任务
+async function debugTestStartTask() {
+    initDebugData();
+    debugUpdateTestInfo();
+
+    const license = document.getElementById('debugTestLicense').value.trim();
+    if (!license) {
+        showMessage('请输入测试密钥', 'error');
+        return;
+    }
+
+    const result = document.getElementById('debugTestResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = `正在测试开始任务...\n\n密钥: ${license}\nIP: ${debugCurrentTestIP}\n设备ID: ${debugCurrentTestDevice.substring(0, 16)}...`;
+
+    const response = await debugClientRequest('startTask', { license });
+
+    setDebugResultStyle(result, response.success);
+    result.textContent = `【开始任务测试结果】\n\n密钥: ${license}\nIP: ${debugCurrentTestIP}\n设备ID: ${debugCurrentTestDevice.substring(0, 16)}...\n\n${JSON.stringify(response, null, 2)}`;
+}
+
+// 同时测试激活和开始任务
+async function debugTestBoth() {
+    initDebugData();
+    debugUpdateTestInfo();
+
+    const license = document.getElementById('debugTestLicense').value.trim();
+    if (!license) {
+        showMessage('请输入测试密钥', 'error');
+        return;
+    }
+
+    const result = document.getElementById('debugTestResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = `正在同时测试激活和开始任务...\n\n密钥: ${license}\nIP: ${debugCurrentTestIP}\n设备ID: ${debugCurrentTestDevice.substring(0, 16)}...`;
+
+    const validateResponse = await debugClientRequest('validate', { license });
+    const startTaskResponse = await debugClientRequest('startTask', { license });
+
+    const hasError = !validateResponse.success || !startTaskResponse.success;
+    setDebugResultStyle(result, !hasError);
+    result.textContent = `【同时测试结果】\n\n密钥: ${license}\nIP: ${debugCurrentTestIP}\n设备ID: ${debugCurrentTestDevice.substring(0, 16)}...\n\n=== 激活结果 ===\n${JSON.stringify(validateResponse, null, 2)}\n\n=== 开始任务结果 ===\n${JSON.stringify(startTaskResponse, null, 2)}`;
+}
+
+// 加载存量数据到下拉框
+async function debugLoadExistingData() {
+    const ipSelect = document.getElementById('debugExistingIP');
+    const deviceSelect = document.getElementById('debugExistingDevice');
+
+    ipSelect.innerHTML = '<option value="">加载中...</option>';
+    deviceSelect.innerHTML = '<option value="">加载中...</option>';
+
+    // 加载待审核列表
+    const pendingResponse = await debugApiRequest('listPendingIPs');
+    // 加载已通过列表
+    const approvedResponse = await debugApiRequest('listApprovedIPs');
+
+    // 填充IP下拉框
+    let ipOptions = '<option value="">-- 选择存量IP --</option>';
+
+    if (pendingResponse.success && pendingResponse.data) {
+        pendingResponse.data.forEach(item => {
+            ipOptions += `<option value="${item.ip}">[待审核] ${item.ip}</option>`;
+        });
+    }
+
+    if (approvedResponse.success && approvedResponse.data) {
+        approvedResponse.data.forEach(item => {
+            ipOptions += `<option value="${item.ip}">[已通过] ${item.ip}</option>`;
+        });
+    }
+
+    ipSelect.innerHTML = ipOptions;
+
+    // 填充设备ID下拉框
+    let deviceOptions = '<option value="">-- 选择存量设备ID --</option>';
+    const addedDevices = new Set();
+
+    if (pendingResponse.success && pendingResponse.data) {
+        pendingResponse.data.forEach(item => {
+            if (item.machineIdFull && !addedDevices.has(item.machineIdFull)) {
+                deviceOptions += `<option value="${item.machineIdFull}">[待审核] ${item.machineIdFull.substring(0, 16)}... (${item.ip})</option>`;
+                addedDevices.add(item.machineIdFull);
+            }
+        });
+    }
+
+    if (approvedResponse.success && approvedResponse.data) {
+        approvedResponse.data.forEach(item => {
+            if (item.machineId && !addedDevices.has(item.machineId)) {
+                deviceOptions += `<option value="${item.machineId}">[已通过] ${item.machineId.substring(0, 16)}... (${item.ip})</option>`;
+                addedDevices.add(item.machineId);
+            }
+        });
+    }
+
+    deviceSelect.innerHTML = deviceOptions;
+
+    const result = document.getElementById('debugExistingResult');
+    result.style.display = 'block';
+    result.style.background = '#d4edda';
+    result.style.color = '#155724';
+    result.textContent = `✅ 已加载存量数据\n\n待审核IP: ${pendingResponse.data?.length || 0} 个\n已通过IP: ${approvedResponse.data?.length || 0} 个`;
+}
+
+// 使用自定义数据测试
+async function debugTestWithCustomData(ip, device, license, action = 'validate') {
+    const debugConfig = getDebugConfig();
+
+    try {
+        const response = await fetch(debugConfig.apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Test-IP': ip
+            },
+            body: JSON.stringify({
+                action: action,
+                license: license,
+                machineId: device,
+                testIP: ip
+            })
+        });
+        return await response.json();
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+// 测试存量IP（激活）
+async function debugTestExistingIP() {
+    const ip = document.getElementById('debugExistingIP').value;
+    const license = document.getElementById('debugExistingTestLicense').value.trim() || 'ZSXQ-RANDOM-TEST';
+
+    if (!ip) {
+        showMessage('请先选择一个存量IP', 'error');
+        return;
+    }
+
+    const result = document.getElementById('debugExistingResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = `正在测试存量IP（激活）...\n\nIP: ${ip}\n密钥: ${license}\n设备ID: 随机生成`;
+
+    const testDevice = debugGenerateRandomDeviceId();
+    const response = await debugTestWithCustomData(ip, testDevice, license, 'validate');
+
+    setDebugResultStyle(result, response.success);
+    result.textContent = `【存量IP激活测试结果】\n\nIP: ${ip}\n密钥: ${license}\n设备ID: ${testDevice.substring(0, 16)}... (随机)\n\n预期: 如果IP在白名单中，应该直接通过\n\n${JSON.stringify(response, null, 2)}`;
+}
+
+// 测试存量IP（开始任务）
+async function debugTestExistingIPStartTask() {
+    const ip = document.getElementById('debugExistingIP').value;
+    const license = document.getElementById('debugExistingTestLicense').value.trim() || 'ZSXQ-RANDOM-TEST';
+
+    if (!ip) {
+        showMessage('请先选择一个存量IP', 'error');
+        return;
+    }
+
+    const result = document.getElementById('debugExistingResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = `正在测试存量IP（开始任务）...\n\nIP: ${ip}\n密钥: ${license}\n设备ID: 随机生成`;
+
+    const testDevice = debugGenerateRandomDeviceId();
+    const response = await debugTestWithCustomData(ip, testDevice, license, 'startTask');
+
+    setDebugResultStyle(result, response.success);
+    result.textContent = `【存量IP开始任务测试结果】\n\nIP: ${ip}\n密钥: ${license}\n设备ID: ${testDevice.substring(0, 16)}... (随机)\n\n预期: 如果IP在白名单中，应该直接通过\n\n${JSON.stringify(response, null, 2)}`;
+}
+
+// 测试存量设备（激活）
+async function debugTestExistingDevice() {
+    const device = document.getElementById('debugExistingDevice').value;
+    const license = document.getElementById('debugExistingTestLicense').value.trim() || 'ZSXQ-RANDOM-TEST';
+
+    if (!device) {
+        showMessage('请先选择一个存量设备ID', 'error');
+        return;
+    }
+
+    const result = document.getElementById('debugExistingResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = `正在测试存量设备ID（激活）...\n\n设备ID: ${device.substring(0, 16)}...\n密钥: ${license}\nIP: 随机生成`;
+
+    const testIP = debugGenerateRandomIP();
+    const response = await debugTestWithCustomData(testIP, device, license, 'validate');
+
+    setDebugResultStyle(result, response.success);
+    result.textContent = `【存量设备ID激活测试结果】\n\nIP: ${testIP} (随机)\n密钥: ${license}\n设备ID: ${device.substring(0, 16)}...\n\n预期: 如果设备ID有激活记录，应该直接通过\n\n${JSON.stringify(response, null, 2)}`;
+}
+
+// 测试存量设备（开始任务）
+async function debugTestExistingDeviceStartTask() {
+    const device = document.getElementById('debugExistingDevice').value;
+    const license = document.getElementById('debugExistingTestLicense').value.trim() || 'ZSXQ-RANDOM-TEST';
+
+    if (!device) {
+        showMessage('请先选择一个存量设备ID', 'error');
+        return;
+    }
+
+    const result = document.getElementById('debugExistingResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = `正在测试存量设备ID（开始任务）...\n\n设备ID: ${device.substring(0, 16)}...\n密钥: ${license}\nIP: 随机生成`;
+
+    const testIP = debugGenerateRandomIP();
+    const response = await debugTestWithCustomData(testIP, device, license, 'startTask');
+
+    setDebugResultStyle(result, response.success);
+    result.textContent = `【存量设备ID开始任务测试结果】\n\nIP: ${testIP} (随机)\n密钥: ${license}\n设备ID: ${device.substring(0, 16)}...\n\n预期: 如果设备ID有激活记录，应该直接通过\n\n${JSON.stringify(response, null, 2)}`;
+}
+
+// 综合测试
+async function debugTestExistingBoth() {
+    const ip = document.getElementById('debugExistingIP').value;
+    const device = document.getElementById('debugExistingDevice').value;
+    const license = document.getElementById('debugExistingTestLicense').value.trim() || 'ZSXQ-RANDOM-TEST';
+
+    if (!ip && !device) {
+        showMessage('请至少选择一个存量IP或设备ID', 'error');
+        return;
+    }
+
+    const result = document.getElementById('debugExistingResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = '正在综合测试...';
+
+    let text = `【存量用户综合测试】\n\n密钥: ${license}\n\n`;
+
+    // 测试1: 存量IP + 随机设备
+    if (ip) {
+        const testDevice1 = debugGenerateRandomDeviceId();
+        text += `=== 测试1: 存量IP + 随机设备 ===\nIP: ${ip}\n设备: ${testDevice1.substring(0, 16)}... (随机)\n\n`;
+
+        const validateResp = await debugTestWithCustomData(ip, testDevice1, license, 'validate');
+        text += `激活结果: ${validateResp.success ? '✅ 通过' : '❌ 失败'}\n${JSON.stringify(validateResp, null, 2)}\n\n`;
+
+        const startTaskResp = await debugTestWithCustomData(ip, testDevice1, license, 'startTask');
+        text += `开始任务结果: ${startTaskResp.success ? '✅ 通过' : '❌ 失败'}\n${JSON.stringify(startTaskResp, null, 2)}\n\n`;
+    }
+
+    // 测试2: 随机IP + 存量设备
+    if (device) {
+        const testIP2 = debugGenerateRandomIP();
+        text += `=== 测试2: 随机IP + 存量设备 ===\nIP: ${testIP2} (随机)\n设备: ${device.substring(0, 16)}...\n\n`;
+
+        const validateResp = await debugTestWithCustomData(testIP2, device, license, 'validate');
+        text += `激活结果: ${validateResp.success ? '✅ 通过' : '❌ 失败'}\n${JSON.stringify(validateResp, null, 2)}\n\n`;
+
+        const startTaskResp = await debugTestWithCustomData(testIP2, device, license, 'startTask');
+        text += `开始任务结果: ${startTaskResp.success ? '✅ 通过' : '❌ 失败'}\n${JSON.stringify(startTaskResp, null, 2)}\n\n`;
+    }
+
+    // 测试3: 存量IP + 存量设备
+    if (ip && device) {
+        text += `=== 测试3: 存量IP + 存量设备 ===\nIP: ${ip}\n设备: ${device.substring(0, 16)}...\n\n`;
+
+        const validateResp = await debugTestWithCustomData(ip, device, license, 'validate');
+        text += `激活结果: ${validateResp.success ? '✅ 通过' : '❌ 失败'}\n${JSON.stringify(validateResp, null, 2)}\n\n`;
+
+        const startTaskResp = await debugTestWithCustomData(ip, device, license, 'startTask');
+        text += `开始任务结果: ${startTaskResp.success ? '✅ 通过' : '❌ 失败'}\n${JSON.stringify(startTaskResp, null, 2)}\n\n`;
+    }
+
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = text;
+}
+
+// 查看待审核列表
+async function debugListPendingIPs() {
+    const result = document.getElementById('debugPendingResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = '正在加载...';
+
+    const response = await debugApiRequest('listPendingIPs');
+
+    if (response.success && response.data) {
+        let text = `找到 ${response.data.length} 条记录：\n\n`;
+        response.data.forEach((item, index) => {
+            text += `${index + 1}. IP: ${item.ip}\n`;
+            text += `   设备ID: ${item.machineIdFull ? item.machineIdFull.substring(0, 16) + '...' : '-'}\n`;
+            text += `   激活时间: ${item.createdAt}\n`;
+            text += `   最后活跃: ${item.lastSeen}\n`;
+            text += `   任务次数: ${item.taskCount}\n`;
+            text += `   剩余时间: ${item.remaining}\n\n`;
+        });
+        result.style.background = '#d4edda';
+        result.style.color = '#155724';
+        result.textContent = text;
+    } else {
+        result.style.background = '#f8d7da';
+        result.style.color = '#721c24';
+        result.textContent = JSON.stringify(response, null, 2);
+    }
+}
+
+// 分析待审核问题
+async function debugAnalyzePendingIPs() {
+    const result = document.getElementById('debugAnalysisResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = '正在分析...';
+
+    const response = await debugApiRequest('listPendingIPs');
+
+    if (response.success && response.data) {
+        const records = response.data;
+        let text = `📊 问题分析报告\n\n`;
+        text += `总记录数: ${records.length}\n\n`;
+
+        // 按 IP 分组
+        const byIP = {};
+        records.forEach(r => {
+            if (!byIP[r.ip]) byIP[r.ip] = [];
+            byIP[r.ip].push(r);
+        });
+
+        text += `不同 IP 数量: ${Object.keys(byIP).length}\n`;
+        Object.keys(byIP).forEach(ip => {
+            text += `  - ${ip}: ${byIP[ip].length} 条记录\n`;
+        });
+        text += `\n`;
+
+        // 按设备ID分组
+        const byDevice = {};
+        records.forEach(r => {
+            const deviceShort = r.machineIdFull ? r.machineIdFull.substring(0, 16) : 'unknown';
+            if (!byDevice[deviceShort]) byDevice[deviceShort] = [];
+            byDevice[deviceShort].push(r);
+        });
+
+        text += `不同设备ID（前16位）数量: ${Object.keys(byDevice).length}\n`;
+        Object.keys(byDevice).forEach(device => {
+            text += `  - ${device}...: ${byDevice[device].length} 条记录\n`;
+        });
+
+        result.style.background = '#d1ecf1';
+        result.style.color = '#0c5460';
+        result.textContent = text;
+    } else {
+        result.style.background = '#f8d7da';
+        result.style.color = '#721c24';
+        result.textContent = JSON.stringify(response, null, 2);
+    }
+}
+
+// 查看日志（调试页面）
+async function debugGetLogs() {
+    const result = document.getElementById('debugLogsResult');
+    result.style.display = 'block';
+    result.style.background = '#d1ecf1';
+    result.style.color = '#0c5460';
+    result.textContent = '正在加载...';
+
+    const response = await debugApiRequest('getLogs', { page: 1, pageSize: 50 });
+
+    if (response.success && response.data) {
+        let text = `最近 ${response.data.length} 条日志：\n\n`;
+        response.data.forEach((log, index) => {
+            text += `${index + 1}. ${log.timestamp} - ${log.action}\n`;
+            text += `   用户: ${log.customer || '-'}\n`;
+            text += `   密钥: ${log.license || '-'}\n`;
+            text += `   设备: ${log.machineId ? log.machineId.substring(0, 16) + '...' : '-'}\n`;
+            text += `   IP: ${log.ip || '-'}\n`;
+            text += `   结果: ${log.success === true ? '✅成功' : log.success === false ? '❌失败' : '-'}\n\n`;
+        });
+        result.style.background = '#d4edda';
+        result.style.color = '#155724';
+        result.textContent = text;
+    } else {
+        result.style.background = '#f8d7da';
+        result.style.color = '#721c24';
+        result.textContent = JSON.stringify(response, null, 2);
     }
 }
