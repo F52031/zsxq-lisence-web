@@ -52,7 +52,7 @@ function initApp() {
 
     // 根据 URL hash 恢复页面状态
     const hash = window.location.hash.replace('#', '') || 'dashboard';
-    const validPages = ['dashboard', 'licenses', 'devices', 'review', 'logs', 'settings', 'debug'];
+    const validPages = ['dashboard', 'licenses', 'devices', 'ipManage', 'deviceOverview', 'review', 'logs', 'settings', 'debug'];
     const pageName = validPages.includes(hash) ? hash : 'dashboard';
     showPageByName(pageName);
 }
@@ -68,7 +68,7 @@ window.onload = () => {
 // 监听浏览器前进后退
 window.onhashchange = () => {
     const hash = window.location.hash.replace('#', '') || 'dashboard';
-    const validPages = ['dashboard', 'licenses', 'devices', 'review', 'logs', 'settings', 'debug'];
+    const validPages = ['dashboard', 'licenses', 'devices', 'ipManage', 'deviceOverview', 'review', 'logs', 'settings', 'debug'];
     if (validPages.includes(hash)) {
         showPageByName(hash);
     }
@@ -90,6 +90,8 @@ function showPageByName(pageName) {
         dashboard: '仪表板',
         licenses: '密钥管理',
         devices: '设备管理',
+        ipManage: 'IP 管理',
+        deviceOverview: '设备总览',
         review: '激活审核',
         logs: '操作日志',
         settings: '系统设置',
@@ -100,6 +102,8 @@ function showPageByName(pageName) {
     // 加载页面数据
     if (pageName === 'dashboard') loadDashboard();
     if (pageName === 'licenses') loadAllLicenses();
+    if (pageName === 'ipManage') loadAllIPs();
+    if (pageName === 'deviceOverview') loadAllDevices();
     if (pageName === 'review') { loadPendingIPs(); loadApprovedIPs(); loadRejectedIPs(); }
     if (pageName === 'logs') loadLogs();
 }
@@ -1936,3 +1940,395 @@ async function debugGetLogs() {
         result.textContent = JSON.stringify(response, null, 2);
     }
 }
+
+// ==================== IP 管理功能 ====================
+
+// 缓存所有 IP 数据
+let allIPsCache = [];
+
+// 加载所有 IP
+async function loadAllIPs() {
+    document.getElementById('allIPsContainer').innerHTML = '<div class="loading">正在加载...</div>';
+
+    // 并行加载三个列表
+    const [pendingResult, approvedResult, rejectedResult] = await Promise.all([
+        apiRequest('listPendingIPs', {}),
+        apiRequest('listApprovedIPs', {}),
+        apiRequest('listRejectedIPs', {})
+    ]);
+
+    allIPsCache = [];
+
+    // 处理待审核 IP
+    if (pendingResult.success && pendingResult.data) {
+        pendingResult.data.forEach(item => {
+            allIPsCache.push({
+                ip: item.ip,
+                status: 'pending',
+                statusText: '待审核',
+                machineId: item.machineIdFull || '',
+                createdAt: item.createdAt || '-',
+                lastSeen: item.lastSeen || '-',
+                taskCount: item.taskCount || 0,
+                maxTasks: item.maxTasks || 10,
+                remaining: item.remaining || '-',
+                licenseType: item.licenseType || '临时密钥'
+            });
+        });
+    }
+
+    // 处理已通过 IP
+    if (approvedResult.success && approvedResult.data) {
+        approvedResult.data.forEach(item => {
+            const ip = typeof item === 'string' ? item : (item.ip || '');
+            const machineId = typeof item === 'object' ? (item.machineId || '') : '';
+            const approvedAt = typeof item === 'object' ? (item.approvedAt || '-') : '-';
+            const lastSeen = typeof item === 'object' ? (item.lastSeen || '-') : '-';
+
+            allIPsCache.push({
+                ip: ip,
+                status: 'approved',
+                statusText: '已通过',
+                machineId: machineId,
+                createdAt: approvedAt,
+                lastSeen: lastSeen,
+                taskCount: '-',
+                maxTasks: '-',
+                remaining: '永久',
+                licenseType: '正式授权'
+            });
+        });
+    }
+
+    // 处理已拒绝 IP
+    if (rejectedResult.success && rejectedResult.data) {
+        rejectedResult.data.forEach(ip => {
+            allIPsCache.push({
+                ip: ip,
+                status: 'rejected',
+                statusText: '已拒绝',
+                machineId: '-',
+                createdAt: '-',
+                lastSeen: '-',
+                taskCount: '-',
+                maxTasks: '-',
+                remaining: '-',
+                licenseType: '-'
+            });
+        });
+    }
+
+    displayIPStats();
+    displayAllIPsList(allIPsCache);
+}
+
+// 显示 IP 统计
+function displayIPStats() {
+    const pending = allIPsCache.filter(i => i.status === 'pending').length;
+    const approved = allIPsCache.filter(i => i.status === 'approved').length;
+    const rejected = allIPsCache.filter(i => i.status === 'rejected').length;
+
+    document.getElementById('ipStatsGrid').innerHTML = `
+        <div class="stat-card">
+            <div class="stat-label">待审核</div>
+            <div class="stat-value" style="color: #ffc107;">${pending}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">已通过</div>
+            <div class="stat-value" style="color: #28a745;">${approved}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">已拒绝</div>
+            <div class="stat-value" style="color: #dc3545;">${rejected}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">总计</div>
+            <div class="stat-value">${allIPsCache.length}</div>
+        </div>
+    `;
+}
+
+// 显示 IP 列表
+function displayAllIPsList(list) {
+    if (!list || list.length === 0) {
+        document.getElementById('allIPsContainer').innerHTML = '<div class="loading">暂无 IP 数据</div>';
+        return;
+    }
+
+    let html = '<table><thead><tr><th>IP 地址</th><th>状态</th><th>设备 ID</th><th>激活时间</th><th>最后活跃</th><th>任务次数</th><th>操作</th></tr></thead><tbody>';
+
+    list.forEach(item => {
+        const statusBadge = item.status === 'approved' ? 'badge-success' :
+            item.status === 'pending' ? 'badge-warning' : 'badge-danger';
+        const machineIdDisplay = item.machineId && item.machineId !== '-' ?
+            item.machineId.substring(0, 8) + '...' : '-';
+
+        let actions = '';
+        if (item.status === 'pending') {
+            actions = `
+                <button class="btn btn-success btn-sm" onclick="approveIPAction('${item.ip}')">✅ 通过</button>
+                <button class="btn btn-danger btn-sm" onclick="rejectIPAction('${item.ip}')">❌ 拒绝</button>
+            `;
+        } else if (item.status === 'approved') {
+            actions = `<button class="btn btn-danger btn-sm" onclick="removeApprovedIPAction('${item.ip}')">🗑️ 移除</button>`;
+        } else if (item.status === 'rejected') {
+            actions = `<button class="btn btn-success btn-sm" onclick="unrejectIPAction('${item.ip}')">🔄 恢复</button>`;
+        }
+
+        html += `<tr>
+            <td><span class="code">${item.ip}</span></td>
+            <td><span class="badge ${statusBadge}">${item.statusText}</span></td>
+            <td><span class="code" title="${item.machineId}">${machineIdDisplay}</span></td>
+            <td>${item.createdAt}</td>
+            <td>${item.lastSeen}</td>
+            <td>${item.taskCount !== '-' ? item.taskCount + ' / ' + item.maxTasks : '-'}</td>
+            <td>${actions}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    html += `<div class="hint" style="margin-top: 10px;">共 ${list.length} 个 IP 地址</div>`;
+    document.getElementById('allIPsContainer').innerHTML = html;
+}
+
+// 搜索 IP
+function searchIPs() {
+    const keyword = document.getElementById('ipSearchKeyword').value.trim().toLowerCase();
+
+    if (!keyword) {
+        displayAllIPsList(allIPsCache);
+        return;
+    }
+
+    const filtered = allIPsCache.filter(item =>
+        item.ip.toLowerCase().includes(keyword) ||
+        (item.machineId && item.machineId.toLowerCase().includes(keyword))
+    );
+
+    displayAllIPsList(filtered);
+}
+
+// ==================== 设备总览功能 ====================
+
+// 缓存所有设备数据
+let allDevicesCache = [];
+
+// 加载所有设备
+async function loadAllDevices() {
+    document.getElementById('allDevicesContainer').innerHTML = '<div class="loading">正在加载...</div>';
+
+    // 并行加载待审核和已通过列表来提取设备信息
+    const [pendingResult, approvedResult, licensesResult] = await Promise.all([
+        apiRequest('listPendingIPs', {}),
+        apiRequest('listApprovedIPs', {}),
+        apiRequest('list', { page: 1, pageSize: 1000 })
+    ]);
+
+    const deviceMap = new Map(); // 用 machineId 去重
+
+    // 从待审核列表提取设备
+    if (pendingResult.success && pendingResult.data) {
+        pendingResult.data.forEach(item => {
+            if (item.machineIdFull) {
+                const existing = deviceMap.get(item.machineIdFull);
+                if (!existing) {
+                    deviceMap.set(item.machineIdFull, {
+                        machineId: item.machineIdFull,
+                        status: 'pending',
+                        statusText: '待审核',
+                        ips: [item.ip],
+                        licenses: [],
+                        firstSeen: item.createdAt || '-',
+                        lastSeen: item.lastSeen || '-',
+                        isBanned: false
+                    });
+                } else {
+                    if (!existing.ips.includes(item.ip)) {
+                        existing.ips.push(item.ip);
+                    }
+                }
+            }
+        });
+    }
+
+    // 从已通过列表提取设备
+    if (approvedResult.success && approvedResult.data) {
+        approvedResult.data.forEach(item => {
+            if (typeof item === 'object' && item.machineId) {
+                const existing = deviceMap.get(item.machineId);
+                if (!existing) {
+                    deviceMap.set(item.machineId, {
+                        machineId: item.machineId,
+                        status: 'approved',
+                        statusText: '已授权',
+                        ips: [item.ip],
+                        licenses: [],
+                        firstSeen: item.approvedAt || '-',
+                        lastSeen: item.lastSeen || '-',
+                        isBanned: false
+                    });
+                } else {
+                    existing.status = 'approved';
+                    existing.statusText = '已授权';
+                    if (item.ip && !existing.ips.includes(item.ip)) {
+                        existing.ips.push(item.ip);
+                    }
+                }
+            }
+        });
+    }
+
+    // 从密钥的设备列表中提取设备（需要查询每个密钥的设备）
+    if (licensesResult.success && licensesResult.data && licensesResult.data.licenses) {
+        for (const lic of licensesResult.data.licenses) {
+            // 尝试获取设备信息
+            const statusResult = await apiRequest('status', { license: lic.license });
+            if (statusResult.success && statusResult.data && statusResult.data.devices) {
+                statusResult.data.devices.forEach(device => {
+                    const existing = deviceMap.get(device.machineId);
+                    if (!existing) {
+                        deviceMap.set(device.machineId, {
+                            machineId: device.machineId,
+                            status: device.isBanned ? 'banned' : 'active',
+                            statusText: device.isBanned ? '已封禁' : '正常',
+                            ips: device.lastIP ? [device.lastIP] : [],
+                            licenses: [lic.license],
+                            firstSeen: device.firstSeen || '-',
+                            lastSeen: device.lastSeen || '-',
+                            isBanned: device.isBanned || false
+                        });
+                    } else {
+                        if (!existing.licenses.includes(lic.license)) {
+                            existing.licenses.push(lic.license);
+                        }
+                        if (device.lastIP && !existing.ips.includes(device.lastIP)) {
+                            existing.ips.push(device.lastIP);
+                        }
+                        if (device.isBanned) {
+                            existing.status = 'banned';
+                            existing.statusText = '已封禁';
+                            existing.isBanned = true;
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    allDevicesCache = Array.from(deviceMap.values());
+    displayDeviceStats();
+    displayAllDevicesList(allDevicesCache);
+}
+
+// 显示设备统计
+function displayDeviceStats() {
+    const active = allDevicesCache.filter(d => d.status === 'active' || d.status === 'approved').length;
+    const pending = allDevicesCache.filter(d => d.status === 'pending').length;
+    const banned = allDevicesCache.filter(d => d.status === 'banned').length;
+
+    document.getElementById('deviceStatsGrid').innerHTML = `
+        <div class="stat-card">
+            <div class="stat-label">正常/已授权</div>
+            <div class="stat-value" style="color: #28a745;">${active}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">待审核</div>
+            <div class="stat-value" style="color: #ffc107;">${pending}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">已封禁</div>
+            <div class="stat-value" style="color: #dc3545;">${banned}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">总设备数</div>
+            <div class="stat-value">${allDevicesCache.length}</div>
+        </div>
+    `;
+}
+
+// 显示设备列表
+function displayAllDevicesList(list) {
+    if (!list || list.length === 0) {
+        document.getElementById('allDevicesContainer').innerHTML = '<div class="loading">暂无设备数据</div>';
+        return;
+    }
+
+    let html = '<table><thead><tr><th>设备 ID</th><th>状态</th><th>关联 IP</th><th>关联密钥</th><th>首次使用</th><th>最后使用</th><th>操作</th></tr></thead><tbody>';
+
+    list.forEach(item => {
+        const statusBadge = item.status === 'approved' || item.status === 'active' ? 'badge-success' :
+            item.status === 'pending' ? 'badge-warning' : 'badge-danger';
+        const machineIdDisplay = item.machineId.substring(0, 12) + '...';
+        const ipsDisplay = item.ips.length > 0 ? item.ips.slice(0, 2).join(', ') + (item.ips.length > 2 ? ` (+${item.ips.length - 2})` : '') : '-';
+        const licensesDisplay = item.licenses.length > 0 ? item.licenses[0].substring(0, 15) + (item.licenses.length > 1 ? ` (+${item.licenses.length - 1})` : '') : '-';
+
+        let actions = '';
+        if (item.licenses.length > 0) {
+            // 有关联密钥的设备可以封禁/解封
+            if (item.isBanned) {
+                actions = `<button class="btn btn-success btn-sm" onclick="unbanDeviceGlobal('${item.licenses[0]}', '${item.machineId}')">🔓 解封</button>`;
+            } else {
+                actions = `<button class="btn btn-danger btn-sm" onclick="banDeviceGlobal('${item.licenses[0]}', '${item.machineId}')">🔒 封禁</button>`;
+            }
+        } else {
+            actions = '<span class="hint">-</span>';
+        }
+
+        html += `<tr>
+            <td><span class="code" title="${item.machineId}">${machineIdDisplay}</span></td>
+            <td><span class="badge ${statusBadge}">${item.statusText}</span></td>
+            <td><span class="code" title="${item.ips.join(', ')}">${ipsDisplay}</span></td>
+            <td><span class="code" title="${item.licenses.join(', ')}">${licensesDisplay}</span></td>
+            <td>${item.firstSeen}</td>
+            <td>${item.lastSeen}</td>
+            <td>${actions}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    html += `<div class="hint" style="margin-top: 10px;">共 ${list.length} 个设备</div>`;
+    document.getElementById('allDevicesContainer').innerHTML = html;
+}
+
+// 搜索设备
+function searchDevicesGlobal() {
+    const keyword = document.getElementById('deviceSearchKeyword').value.trim().toLowerCase();
+
+    if (!keyword) {
+        displayAllDevicesList(allDevicesCache);
+        return;
+    }
+
+    const filtered = allDevicesCache.filter(item =>
+        item.machineId.toLowerCase().includes(keyword) ||
+        item.ips.some(ip => ip.toLowerCase().includes(keyword)) ||
+        item.licenses.some(lic => lic.toLowerCase().includes(keyword))
+    );
+
+    displayAllDevicesList(filtered);
+}
+
+// 全局封禁设备
+async function banDeviceGlobal(license, machineId) {
+    if (!confirm(`确定要封禁设备 ${machineId.substring(0, 12)}... 吗？`)) return;
+    const result = await apiRequest('banDevice', { license, machineId });
+    if (result.success) {
+        showMessage('设备已封禁', 'success');
+        loadAllDevices();
+    } else {
+        showMessage(result.error || '封禁失败', 'error');
+    }
+}
+
+// 全局解封设备
+async function unbanDeviceGlobal(license, machineId) {
+    if (!confirm(`确定要解封设备 ${machineId.substring(0, 12)}... 吗？`)) return;
+    const result = await apiRequest('unbanDevice', { license, machineId });
+    if (result.success) {
+        showMessage('设备已解封', 'success');
+        loadAllDevices();
+    } else {
+        showMessage(result.error || '解封失败', 'error');
+    }
+}
+
