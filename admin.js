@@ -2018,6 +2018,17 @@ async function loadAllIPs() {
         });
     }
 
+    // 按激活时间排序（最新优先）
+    allIPsCache.sort((a, b) => {
+        // 处理 '-' 或空值
+        if (a.createdAt === '-' || !a.createdAt) return 1;
+        if (b.createdAt === '-' || !b.createdAt) return -1;
+        // 尝试解析日期
+        const dateA = new Date(a.createdAt);
+        const dateB = new Date(b.createdAt);
+        return dateB - dateA; // 降序
+    });
+
     displayIPStats();
     displayAllIPsList(allIPsCache);
 }
