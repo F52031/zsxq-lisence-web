@@ -7,6 +7,132 @@ let config = {
 // 管理密码（可以修改为你想要的密码）
 const ADMIN_PASSWORD = 'zsxq2025';
 
+// ==================== 全局用户数据缓存 ====================
+// 用于跨页面统一 IP/设备ID/用户名 的映射
+let globalUserData = {
+    loaded: false,
+    ipToInfo: new Map(),      // IP -> { machineId, userName, status }
+    machineIdToInfo: new Map(), // machineId -> { ips: [], userName, status }
+    lastLoadTime: 0
+};
+
+// 加载全局用户数据（登录后调用一次）
+async function loadGlobalUserData() {
+    console.log('Loading global user data...');
+
+    const [pendingResult, approvedResult, licensesResult] = await Promise.all([
+        apiRequest('listPendingIPs', {}),
+        apiRequest('listApprovedIPs', {}),
+        apiRequest('list', { page: 1, pageSize: 500 })
+    ]);
+
+    globalUserData.ipToInfo.clear();
+    globalUserData.machineIdToInfo.clear();
+
+    // 处理待审核 IP
+    if (pendingResult.success && pendingResult.data) {
+        pendingResult.data.forEach(item => {
+            const info = {
+                machineId: item.machineIdFull || '',
+                userName: item.note || '',
+                status: 'pending'
+            };
+            globalUserData.ipToInfo.set(item.ip, info);
+
+            if (item.machineIdFull) {
+                const existing = globalUserData.machineIdToInfo.get(item.machineIdFull);
+                if (!existing) {
+                    globalUserData.machineIdToInfo.set(item.machineIdFull, {
+                        ips: [item.ip],
+                        userName: item.note || '',
+                        status: 'pending'
+                    });
+                } else {
+                    if (!existing.ips.includes(item.ip)) existing.ips.push(item.ip);
+                    if (!existing.userName && item.note) existing.userName = item.note;
+                }
+            }
+        });
+    }
+
+    // 处理已通过 IP
+    if (approvedResult.success && approvedResult.data) {
+        approvedResult.data.forEach(item => {
+            if (typeof item === 'object') {
+                const info = {
+                    machineId: item.machineId || '',
+                    userName: item.note || '',
+                    status: 'approved'
+                };
+                globalUserData.ipToInfo.set(item.ip, info);
+
+                if (item.machineId) {
+                    const existing = globalUserData.machineIdToInfo.get(item.machineId);
+                    if (!existing) {
+                        globalUserData.machineIdToInfo.set(item.machineId, {
+                            ips: [item.ip],
+                            userName: item.note || '',
+                            status: 'approved'
+                        });
+                    } else {
+                        if (!existing.ips.includes(item.ip)) existing.ips.push(item.ip);
+                        if (!existing.userName && item.note) existing.userName = item.note;
+                        existing.status = 'approved'; // 升级状态
+                    }
+                }
+            }
+        });
+    }
+
+    // 从密钥数据补充用户名
+    if (licensesResult.success && licensesResult.data && licensesResult.data.licenses) {
+        licensesResult.data.licenses.forEach(lic => {
+            if (lic.allowedIPs && lic.allowedIPs.length > 0) {
+                lic.allowedIPs.forEach(ip => {
+                    const existing = globalUserData.ipToInfo.get(ip);
+                    if (existing && !existing.userName) {
+                        existing.userName = lic.customer;
+                    } else if (!existing) {
+                        globalUserData.ipToInfo.set(ip, {
+                            machineId: '',
+                            userName: lic.customer,
+                            status: 'licensed'
+                        });
+                    }
+                });
+            }
+        });
+    }
+
+    globalUserData.loaded = true;
+    globalUserData.lastLoadTime = Date.now();
+    console.log(`Global user data loaded: ${globalUserData.ipToInfo.size} IPs, ${globalUserData.machineIdToInfo.size} devices`);
+}
+
+// 根据 IP 获取用户名
+function getUserNameByIP(ip) {
+    const info = globalUserData.ipToInfo.get(ip);
+    return info ? info.userName : '';
+}
+
+// 根据 IP 获取设备 ID
+function getMachineIdByIP(ip) {
+    const info = globalUserData.ipToInfo.get(ip);
+    return info ? info.machineId : '';
+}
+
+// 根据设备 ID 获取用户名
+function getUserNameByMachineId(machineId) {
+    const info = globalUserData.machineIdToInfo.get(machineId);
+    return info ? info.userName : '';
+}
+
+// 根据设备 ID 获取 IP 列表
+function getIPsByMachineId(machineId) {
+    const info = globalUserData.machineIdToInfo.get(machineId);
+    return info ? info.ips : [];
+}
+
 // 检查登录状态
 function checkLogin() {
     return sessionStorage.getItem('adminLoggedIn') === 'true';
@@ -35,7 +161,7 @@ function logout() {
 }
 
 // 初始化应用
-function initApp() {
+async function initApp() {
     const saved = localStorage.getItem('adminConfig');
     if (saved) {
         const savedConfig = JSON.parse(saved);
@@ -49,6 +175,9 @@ function initApp() {
     }
     document.getElementById('apiUrl').value = config.apiUrl;
     document.getElementById('adminKey').value = config.adminKey;
+
+    // 加载全局用户数据
+    await loadGlobalUserData();
 
     // 根据 URL hash 恢复页面状态
     const hash = window.location.hash.replace('#', '') || 'dashboard';
@@ -767,15 +896,74 @@ function showImportDialog() {
 // 加载操作日志
 let currentLogsPage = 1;
 const logsPageSize = 50;
+let currentIPFilter = ''; // 当前 IP 过滤条件
+
 async function loadLogs(page = 1) {
     currentLogsPage = page;
-    const result = await apiRequest('getLogs', {
-        page: page,
-        pageSize: logsPageSize
-    });
-    if (result.success) {
-        displayLogs(result.data, result.total || 0);
+
+    const params = { page: page, pageSize: logsPageSize };
+    
+    // 如果有 IP 过滤条件，添加到请求参数
+    if (currentIPFilter) {
+        params.ip = currentIPFilter;
     }
+
+    const logsResult = await apiRequest('getLogs', params);
+
+    if (logsResult.success) {
+        displayLogs(logsResult.data, logsResult.total || 0);
+        
+        // 显示搜索信息
+        if (currentIPFilter) {
+            document.getElementById('logsSearchInfo').style.display = 'block';
+            document.getElementById('logsSearchText').textContent = `🔍 正在显示 IP: ${currentIPFilter} 的操作记录 (共 ${logsResult.total || 0} 条)`;
+        } else {
+            document.getElementById('logsSearchInfo').style.display = 'none';
+        }
+    }
+}
+
+// 按 IP 搜索日志
+async function searchLogsByIP() {
+    const ip = document.getElementById('ipSearchInput').value.trim();
+    
+    if (!ip) {
+        showMessage('请输入 IP 地址', 'error');
+        return;
+    }
+    
+    // 简单的 IP 格式验证
+    const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (!ipPattern.test(ip)) {
+        showMessage('请输入有效的 IP 地址格式 (例如: 192.168.1.1)', 'error');
+        return;
+    }
+    
+    currentIPFilter = ip;
+    currentLogsPage = 1;
+    await loadLogs(1);
+    showMessage(`正在搜索 IP: ${ip} 的操作记录`, 'success');
+}
+
+// 清除 IP 搜索
+async function clearIPSearch() {
+    currentIPFilter = '';
+    document.getElementById('ipSearchInput').value = '';
+    document.getElementById('logsSearchInfo').style.display = 'none';
+    currentLogsPage = 1;
+    await loadLogs(1);
+    showMessage('已清除搜索条件', 'success');
+}
+
+// 快速搜索 IP（从日志列表中点击）
+async function quickSearchIP(ip) {
+    document.getElementById('ipSearchInput').value = ip;
+    currentIPFilter = ip;
+    currentLogsPage = 1;
+    await loadLogs(1);
+    showMessage(`正在搜索 IP: ${ip} 的操作记录`, 'success');
+    // 滚动到顶部
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // 显示操作日志
@@ -787,18 +975,50 @@ function displayLogs(logs, total) {
     }
 
     let html = '<table><thead><tr><th>时间</th><th>操作</th><th>用户名</th><th>密钥</th><th>设备ID</th><th>IP</th></tr></thead><tbody>';
+
+    // 调试：打印第一条日志和缓存内容
+    if (logs.length > 0) {
+        const firstLog = logs[0];
+        console.log('First log entry:', firstLog);
+        console.log('Looking up IP:', firstLog.ip, '-> userName:', getUserNameByIP(firstLog.ip));
+        console.log('Looking up machineId:', firstLog.machineId, '-> userName:', getUserNameByMachineId(firstLog.machineId));
+        console.log('Cache has', globalUserData.ipToInfo.size, 'IPs');
+        // 打印几个缓存的 IP 示例
+        let count = 0;
+        globalUserData.ipToInfo.forEach((info, ip) => {
+            if (count < 3) console.log('  Cache entry:', ip, '->', info.userName);
+            count++;
+        });
+    }
+
     logs.forEach(log => {
         // 设备 ID 显示前 8 位，鼠标悬停显示完整
         const machineIdDisplay = log.machineId ? log.machineId.substring(0, 8) + '...' : '-';
         const machineIdTitle = log.machineId || '';
 
+        // 用户名优先级：IP 备注/用户名 > 设备 ID 用户名 > 默认
+        let userName = getUserNameByIP(log.ip) || getUserNameByMachineId(log.machineId) || '-';
+        if (userName !== '-') {
+            userName = `<strong>${userName}</strong>`;
+        }
+
+        // IP 列：显示 IP + 快速搜索按钮
+        let ipCell = '-';
+        if (log.ip) {
+            ipCell = `<span class="code">${log.ip}</span>`;
+            // 如果当前不是在搜索这个 IP，显示搜索按钮
+            if (currentIPFilter !== log.ip) {
+                ipCell += ` <button class="btn btn-sm" onclick="quickSearchIP('${log.ip}')" title="搜索此IP的所有记录" style="padding: 2px 6px; font-size: 11px;">🔍</button>`;
+            }
+        }
+
         html += `<tr>
             <td>${log.timestamp}</td>
             <td>${log.action}</td>
-            <td>${log.customer || '-'}</td>
+            <td>${userName}</td>
             <td><span class="code">${log.license || '-'}</span></td>
             <td>${log.machineId ? '<span class="code" title="' + machineIdTitle + '">' + machineIdDisplay + '</span>' : '-'}</td>
-            <td><span class="code">${log.ip || '-'}</span></td>
+            <td>${ipCell}</td>
         </tr>`;
     });
     html += '</tbody></table>';
@@ -1226,7 +1446,7 @@ function displayPendingIPs(list) {
         return;
     }
 
-    let html = '<table><thead><tr><th>IP 地址</th><th>设备 ID</th><th>激活时间</th><th>最后活跃</th><th>任务次数</th><th>剩余时间</th><th>类型</th><th>操作</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>IP 地址</th><th>设备 ID</th><th>激活时间</th><th>最后活跃</th><th>任务次数</th><th>剩余时间</th><th>类型</th><th>订单号</th><th>操作</th></tr></thead><tbody>';
     list.forEach(item => {
         const taskCount = item.taskCount || 0;
         const maxTasks = item.maxTasks || 10;
@@ -1234,6 +1454,7 @@ function displayPendingIPs(list) {
         const taskBadge = taskCount >= maxTasks ? 'badge-danger' : 'badge-info';
         const deviceIdShort = item.machineIdFull ? item.machineIdFull.substring(0, 8) + '...' : '-';
         const licenseType = item.licenseType || '临时密钥';
+        const contactInfo = item.contact_info || '-';
         html += `<tr>
             <td><span class="code">${item.ip}</span></td>
             <td><span class="code" title="${item.machineIdFull || ''}">${deviceIdShort}</span></td>
@@ -1242,6 +1463,7 @@ function displayPendingIPs(list) {
             <td><span class="badge ${taskBadge}">${taskInfo}</span></td>
             <td><span class="badge badge-warning">${item.remaining}</span></td>
             <td><span class="badge badge-secondary">${licenseType}</span></td>
+            <td><span class="code" title="${contactInfo}">${contactInfo}</span></td>
             <td>
                 <button class="btn btn-success btn-sm" onclick="approveIPAction('${item.ip}')">✅ 通过</button>
                 <button class="btn btn-danger btn-sm" onclick="rejectIPAction('${item.ip}')">❌ 拒绝</button>
@@ -1972,7 +2194,8 @@ async function loadAllIPs() {
                 taskCount: item.taskCount || 0,
                 maxTasks: item.maxTasks || 10,
                 remaining: item.remaining || '-',
-                licenseType: item.licenseType || '临时密钥'
+                licenseType: item.licenseType || '临时密钥',
+                note: item.note || ''
             });
         });
     }
@@ -1995,7 +2218,8 @@ async function loadAllIPs() {
                 taskCount: '-',
                 maxTasks: '-',
                 remaining: '永久',
-                licenseType: '正式授权'
+                licenseType: '正式授权',
+                note: typeof item === 'object' ? (item.note || '') : ''
             });
         });
     }
@@ -2013,7 +2237,8 @@ async function loadAllIPs() {
                 taskCount: '-',
                 maxTasks: '-',
                 remaining: '-',
-                licenseType: '-'
+                licenseType: '-',
+                note: ''
             });
         });
     }
@@ -2066,28 +2291,30 @@ function displayAllIPsList(list) {
         return;
     }
 
-    let html = '<table><thead><tr><th>IP 地址</th><th>状态</th><th>设备 ID</th><th>激活时间</th><th>最后活跃</th><th>任务次数</th><th>操作</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>IP 地址</th><th>备注</th><th>状态</th><th>设备 ID</th><th>激活时间</th><th>最后活跃</th><th>任务次数</th><th>操作</th></tr></thead><tbody>';
 
     list.forEach(item => {
         const statusBadge = item.status === 'approved' ? 'badge-success' :
             item.status === 'pending' ? 'badge-warning' : 'badge-danger';
         const machineIdDisplay = item.machineId && item.machineId !== '-' ?
             item.machineId.substring(0, 8) + '...' : '-';
+        const noteDisplay = item.note ? `<strong>${item.note}</strong>` : '<span style="color:#999">-</span>';
 
-        let actions = '';
+        let actions = `<button class="btn btn-sm" onclick="editIPNote('${item.ip}', '${(item.note || '').replace(/'/g, "\\'")}')">✏️</button> `;
         if (item.status === 'pending') {
-            actions = `
-                <button class="btn btn-success btn-sm" onclick="approveIPAction('${item.ip}')">✅ 通过</button>
-                <button class="btn btn-danger btn-sm" onclick="rejectIPAction('${item.ip}')">❌ 拒绝</button>
+            actions += `
+                <button class="btn btn-success btn-sm" onclick="approveIPAction('${item.ip}')">✅</button>
+                <button class="btn btn-danger btn-sm" onclick="rejectIPAction('${item.ip}')">❌</button>
             `;
         } else if (item.status === 'approved') {
-            actions = `<button class="btn btn-danger btn-sm" onclick="removeApprovedIPAction('${item.ip}')">🗑️ 移除</button>`;
+            actions += `<button class="btn btn-danger btn-sm" onclick="removeApprovedIPAction('${item.ip}')">🗑️</button>`;
         } else if (item.status === 'rejected') {
-            actions = `<button class="btn btn-success btn-sm" onclick="unrejectIPAction('${item.ip}')">🔄 恢复</button>`;
+            actions += `<button class="btn btn-success btn-sm" onclick="unrejectIPAction('${item.ip}')">🔄</button>`;
         }
 
         html += `<tr>
             <td><span class="code">${item.ip}</span></td>
+            <td>${noteDisplay}</td>
             <td><span class="badge ${statusBadge}">${item.statusText}</span></td>
             <td><span class="code" title="${item.machineId}">${machineIdDisplay}</span></td>
             <td>${item.createdAt}</td>
@@ -2113,10 +2340,31 @@ function searchIPs() {
 
     const filtered = allIPsCache.filter(item =>
         item.ip.toLowerCase().includes(keyword) ||
-        (item.machineId && item.machineId.toLowerCase().includes(keyword))
+        (item.machineId && item.machineId.toLowerCase().includes(keyword)) ||
+        (item.note && item.note.toLowerCase().includes(keyword))
     );
 
     displayAllIPsList(filtered);
+}
+
+// 编辑 IP 备注
+async function editIPNote(ip, currentNote) {
+    const note = prompt('为该 IP 设置备注名称（如用户名）:', currentNote);
+    if (note === null) return; // 取消
+
+    const result = await apiRequest('updateIPNote', { ip, note });
+    if (result.success) {
+        showMessage('备注已更新', 'success');
+        // 更新本地 IP 缓存
+        const item = allIPsCache.find(i => i.ip === ip);
+        if (item) item.note = note;
+        // 更新全局用户数据缓存
+        const globalInfo = globalUserData.ipToInfo.get(ip);
+        if (globalInfo) globalInfo.userName = note;
+        displayAllIPsList(allIPsCache);
+    } else {
+        showMessage(result.error || '更新失败', 'error');
+    }
 }
 
 // ==================== 设备总览功能 ====================
@@ -2343,3 +2591,120 @@ async function unbanDeviceGlobal(license, machineId) {
     }
 }
 
+// ==================== 版本管理功能 ====================
+
+// 检查当前版本
+async function checkCurrentVersion() {
+    const display = document.getElementById('currentVersionDisplay');
+    display.innerHTML = '加载中...';
+
+    // 使用 debugClientRequest (无需 adminKey) 或者 apiRequest (需 adminKey)
+    // getLatestVersion 是公开接口，但我们在后台用 apiRequest 也行
+    const result = await apiRequest('getLatestVersion', {});
+
+    if (result.success && result.data) {
+        const info = result.data;
+        if (!info.version || info.version === '1.0.0') {
+            display.innerHTML = '暂无发布记录';
+        } else {
+            const dateStr = info.publishedAt ? new Date(info.publishedAt).toLocaleString() : '-';
+            display.innerHTML = `
+                <strong>${info.version}</strong><br>
+                <small style="color: #666">发布时间: ${dateStr}</small><br>
+                <div style="margin-top: 5px; font-size: 13px;">${info.updateNotes || '无更新说明'}</div>
+                <div style="margin-top: 5px;"><a href="${info.downloadUrl}" target="_blank">下载链接</a></div>
+            `;
+
+            // 自动填充下一次版本号 (简单逻辑: 补丁号+1)
+            const parts = info.version.split('.');
+            if (parts.length === 3) {
+                parts[2] = parseInt(parts[2]) + 1;
+                document.getElementById('newVersionInput').value = parts.join('.');
+            }
+        }
+    } else {
+        display.innerHTML = '<span style="color: red">加载失败</span>';
+    }
+}
+
+// 发布新版本
+async function publishNewVersion() {
+    const version = document.getElementById('newVersionInput').value.trim();
+    const downloadUrl = document.getElementById('newDownloadUrlInput').value.trim();
+    const updateNotes = document.getElementById('newUpdateNotesInput').value.trim();
+
+    if (!version) {
+        showMessage('请输入版本号', 'error');
+        return;
+    }
+    if (!downloadUrl) {
+        showMessage('请输入下载链接', 'error');
+        return;
+    }
+
+    if (!confirm(`确定要发布版本 ${version} 吗？\n\n发布后，所有使用旧版插件的用户都会收到更新提示。`)) {
+        return;
+    }
+
+    const result = await apiRequest('setLatestVersion', {
+        version,
+        downloadUrl,
+        updateNotes
+    });
+
+    if (result.success) {
+        showMessage(`版本 ${version} 发布成功！`, 'success');
+        checkCurrentVersion();
+        loadVersionHistory(); // 刷新历史
+
+        // 清空输入
+        document.getElementById('newUpdateNotesInput').value = '';
+    } else {
+        showMessage(result.error || '发布失败', 'error');
+    }
+}
+
+// 加载历史版本
+async function loadVersionHistory() {
+    const container = document.getElementById('versionHistoryContainer');
+    container.innerHTML = '加载中...';
+
+    const result = await apiRequest('listVersions', {});
+
+    if (result.success) {
+        const list = result.data || [];
+        if (list.length === 0) {
+            container.innerHTML = '<div style="color: #999; padding: 10px;">暂无历史版本</div>';
+            return;
+        }
+
+        let html = '<table class="table"><thead><tr><th>版本</th><th>发布时间</th><th>更新说明</th><th>下载链接</th></tr></thead><tbody>';
+
+        list.forEach(item => {
+            const dateStr = item.publishedAt ? new Date(item.publishedAt).toLocaleString() : '-';
+            const notes = item.updateNotes ? item.updateNotes.replace(/\n/g, '<br>') : '-';
+            html += `<tr>
+                <td><strong>${item.version}</strong></td>
+                <td>${dateStr}</td>
+                <td style="max-width: 300px; font-size: 13px;">${notes}</td>
+                <td><a href="${item.downloadUrl}" target="_blank">下载</a></td>
+            </tr>`;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    } else {
+        container.innerHTML = '<div style="color: red;">加载失败</div>';
+    }
+}
+
+// 页面切换监听 (可选，用于自动加载数据)
+const originalShowPage = window.showPage;
+window.showPage = function (pageId) {
+    if (originalShowPage) originalShowPage(pageId);
+
+    if (pageId === 'settings') {
+        checkCurrentVersion();
+        loadVersionHistory();
+    }
+};
