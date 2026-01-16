@@ -974,7 +974,7 @@ function displayLogs(logs, total) {
         return;
     }
 
-    let html = '<table><thead><tr><th>时间</th><th>操作</th><th>用户名</th><th>密钥</th><th>设备ID</th><th>IP</th></tr></thead><tbody>';
+    let html = '<table><thead><tr><th>时间</th><th>操作</th><th>功能</th><th>用户名</th><th>密钥</th><th>设备ID</th><th>IP</th></tr></thead><tbody>';
 
     // 调试：打印第一条日志和缓存内容
     if (logs.length > 0) {
@@ -1002,6 +1002,9 @@ function displayLogs(logs, total) {
             userName = `<strong>${userName}</strong>`;
         }
 
+        // 功能名称
+        const featureName = log.feature || '-';
+
         // IP 列：显示 IP + 快速搜索按钮
         let ipCell = '-';
         if (log.ip) {
@@ -1015,6 +1018,7 @@ function displayLogs(logs, total) {
         html += `<tr>
             <td>${log.timestamp}</td>
             <td>${log.action}</td>
+            <td>${featureName}</td>
             <td>${userName}</td>
             <td><span class="code">${log.license || '-'}</span></td>
             <td>${log.machineId ? '<span class="code" title="' + machineIdTitle + '">' + machineIdDisplay + '</span>' : '-'}</td>
