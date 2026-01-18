@@ -1,6 +1,6 @@
-// 配置
+// 配置（API地址已写死，不可修改）
+const API_URL = 'https://1340181402-3thvnndcwl.ap-guangzhou.tencentscf.com';
 let config = {
-    apiUrl: 'https://1340181402-3thvnndcwl.ap-guangzhou.tencentscf.com',
     adminKey: 'ADMIN-KEY-2025'
 };
 
@@ -165,15 +165,8 @@ async function initApp() {
     const saved = localStorage.getItem('adminConfig');
     if (saved) {
         const savedConfig = JSON.parse(saved);
-        // 如果保存的是旧地址，使用新地址覆盖
-        if (savedConfig.apiUrl && !savedConfig.apiUrl.includes('tencentscf.com')) {
-            config.apiUrl = 'https://1340181402-3thvnndcwl.ap-guangzhou.tencentscf.com';
-            localStorage.setItem('adminConfig', JSON.stringify(config));
-        } else {
-            config = savedConfig;
-        }
+        config.adminKey = savedConfig.adminKey || config.adminKey;
     }
-    document.getElementById('apiUrl').value = config.apiUrl;
     document.getElementById('adminKey').value = config.adminKey;
 
     // 加载全局用户数据
@@ -266,7 +259,7 @@ function showMessage(text, type = 'success') {
 // API 请求
 async function apiRequest(action, data = {}) {
     try {
-        const response = await fetch(config.apiUrl, {
+        const response = await fetch(API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action, adminKey: config.adminKey, ...data })
@@ -451,7 +444,6 @@ function formatTime(time) {
 
 // 保存配置
 function saveConfig() {
-    config.apiUrl = document.getElementById('apiUrl').value.trim();
     config.adminKey = document.getElementById('adminKey').value.trim();
     localStorage.setItem('adminConfig', JSON.stringify(config));
     showMessage('配置已保存', 'success');
@@ -1767,7 +1759,7 @@ function initDebugData() {
 // 获取调试配置
 function getDebugConfig() {
     return {
-        apiUrl: document.getElementById('debugApiUrl')?.value || config.apiUrl,
+        apiUrl: API_URL,
         adminKey: document.getElementById('debugAdminKey')?.value || config.adminKey
     };
 }
