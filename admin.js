@@ -223,7 +223,7 @@ function showPageByName(pageName) {
 
     // 加载页面数据
     if (pageName === 'dashboard') loadDashboard();
-    if (pageName === 'licenses') loadAllLicenses();
+    if (pageName === 'licenses') { loadAllLicenses(); loadTempLicenseConfig(); }
     if (pageName === 'ipManage') loadAllIPs();
     if (pageName === 'deviceOverview') loadAllDevices();
     if (pageName === 'review') { loadPendingIPs(); loadApprovedIPs(); loadRejectedIPs(); }
@@ -457,6 +457,87 @@ async function testConnection() {
         showMessage('连接成功！', 'success');
     } else {
         showMessage('连接失败：' + result.error, 'error');
+    }
+}
+
+// 加载临时密钥配置
+async function loadTempLicenseConfig() {
+    showMessage('正在加载临时密钥配置...', 'success');
+    const result = await apiRequest('getAutoDeliveryConfig', {});
+    
+    if (result.success && result.data) {
+        const config = result.data;
+        
+        // 填充表单
+        document.getElementById('tempLicenseName').value = config.license || '';
+        document.getElementById('tempValidHours').value = config.validHours || 12;
+        document.getElementById('tempMaxTasks').value = config.maxTasks || 10;
+        document.getElementById('tempMaxActivations').value = config.maxActivations || 3;
+        
+        // 显示当前配置状态
+        const statusDiv = document.getElementById('tempConfigStatus');
+        const displayDiv = document.getElementById('tempConfigDisplay');
+        
+        statusDiv.style.display = 'block';
+        displayDiv.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 10px;">
+                <div><strong>密钥名称：</strong>${config.license}</div>
+                <div><strong>有效期：</strong>${config.validHours} 小时</div>
+                <div><strong>最大任务数：</strong>${config.maxTasks} 次</div>
+                <div><strong>最大激活次数：</strong>${config.maxActivations} 次</div>
+            </div>
+            ${config.updatedAt ? `<div style="margin-top: 10px; color: #666; font-size: 12px;">最后更新：${formatTime(config.updatedAt)}</div>` : ''}
+        `;
+        
+        showMessage('临时密钥配置加载成功', 'success');
+    } else {
+        showMessage('加载失败：' + (result.error || '未知错误'), 'error');
+    }
+}
+
+// 保存临时密钥配置
+async function saveTempLicenseConfig() {
+    const license = document.getElementById('tempLicenseName').value.trim();
+    const validHours = parseInt(document.getElementById('tempValidHours').value);
+    const maxTasks = parseInt(document.getElementById('tempMaxTasks').value);
+    const maxActivations = parseInt(document.getElementById('tempMaxActivations').value);
+    
+    // 验证输入
+    if (!license) {
+        showMessage('请输入临时密钥名称', 'error');
+        return;
+    }
+    
+    if (validHours < 1 || validHours > 168) {
+        showMessage('有效期必须在 1-168 小时之间', 'error');
+        return;
+    }
+    
+    if (maxTasks < 1 || maxTasks > 1000) {
+        showMessage('最大任务数必须在 1-1000 之间', 'error');
+        return;
+    }
+    
+    if (maxActivations < 1 || maxActivations > 100) {
+        showMessage('最大激活次数必须在 1-100 之间', 'error');
+        return;
+    }
+    
+    showMessage('正在保存配置...', 'success');
+    
+    const result = await apiRequest('setAutoDeliveryConfig', {
+        license,
+        validHours,
+        maxTasks,
+        maxActivations
+    });
+    
+    if (result.success) {
+        showMessage('临时密钥配置已保存，修改立即生效！', 'success');
+        // 重新加载配置以显示最新状态
+        loadTempLicenseConfig();
+    } else {
+        showMessage('保存失败：' + (result.error || '未知错误'), 'error');
     }
 }
 
