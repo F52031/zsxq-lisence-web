@@ -148,7 +148,52 @@
         <div id="licenses" class="page">
             <div class="card">
                 <div class="card-header">
-                    <h3>生成临时密钥（5次任务，3小时）</h3>
+                    <h3>🎫 临时密钥配置</h3>
+                </div>
+                <div class="card-body">
+                    <p class="hint">💡 配置临时密钥的名称、有效期、任务次数和激活次数限制，修改后立即生效</p>
+                    
+                    <div class="form-group">
+                        <label>临时密钥名称</label>
+                        <input type="text" id="tempLicenseName" class="form-control" placeholder="例如：AUTOEMAIL8888">
+                        <p class="hint">用户使用此密钥激活插件</p>
+                    </div>
+
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>有效期（小时）</label>
+                            <input type="number" id="tempValidHours" class="form-control" min="1" max="168" value="12">
+                            <p class="hint">1-168小时</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label>最大任务次数</label>
+                            <input type="number" id="tempMaxTasks" class="form-control" min="1" max="1000" value="10">
+                            <p class="hint">1-1000次</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label>最大激活次数</label>
+                            <input type="number" id="tempMaxActivations" class="form-control" min="1" max="100" value="3">
+                            <p class="hint">每个设备可激活次数</p>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <button class="btn btn-primary" onclick="saveTempLicenseConfig()">💾 保存配置</button>
+                        <button class="btn" onclick="loadTempLicenseConfig()">🔄 刷新</button>
+                    </div>
+
+                    <div id="tempConfigStatus" style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px; display: none;">
+                        <strong>当前配置：</strong>
+                        <div id="tempConfigDisplay" style="margin-top: 10px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3>生成临时密钥</h3>
                 </div>
                 <div class="card-body">
                     <div class="form-row">
@@ -157,7 +202,7 @@
                             style="width: 100px; margin-right: 10px;">
                         <button class="btn btn-primary" onclick="generateTempLicenses()">🎫 生成临时密钥</button>
                     </div>
-                    <p class="hint">💡 每个密钥可使用 5 次任务，有效期 3 小时，用完或过期后自动失效</p>
+                    <p class="hint">💡 临时密钥的有效期和任务次数由上方配置决定</p>
 
                     <div id="tempLicensesResult" style="margin-top: 20px;"></div>
                 </div>
