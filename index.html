@@ -84,12 +84,62 @@
         <div id="dashboard" class="page active">
             <div class="stats-grid" id="statsGrid"></div>
 
+            <!-- 快捷操作 -->
+            <div class="quick-actions">
+                <button class="quick-action-btn" onclick="showPage('licenses')">
+                    <span class="quick-icon">🎫</span>
+                    <span class="quick-text">生成临时密钥</span>
+                </button>
+                <button class="quick-action-btn" onclick="showPage('licenses')">
+                    <span class="quick-icon">🔑</span>
+                    <span class="quick-text">注册正式密钥</span>
+                </button>
+                <button class="quick-action-btn" onclick="showPage('review')">
+                    <span class="quick-icon">✅</span>
+                    <span class="quick-text">审核激活</span>
+                </button>
+                <button class="quick-action-btn" onclick="showPage('logs')">
+                    <span class="quick-icon">📋</span>
+                    <span class="quick-text">查看日志</span>
+                </button>
+            </div>
+
+            <!-- 数据趋势图表 -->
+            <div class="dashboard-charts">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>📈 密钥使用趋势（最近7天）</h3>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="licenseChart" style="max-height: 250px;"></canvas>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3>📊 密钥状态分布</h3>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="statusChart" style="max-height: 250px;"></canvas>
+                    </div>
+                </div>
+            </div>
+
             <div class="card">
                 <div class="card-header">
                     <h3>最近密钥</h3>
                 </div>
                 <div class="card-body">
                     <div id="recentLicenses"></div>
+                </div>
+            </div>
+
+            <!-- 今日活动 -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>📅 今日活动</h3>
+                </div>
+                <div class="card-body">
+                    <div id="todayActivity"></div>
                 </div>
             </div>
         </div>
@@ -157,11 +207,31 @@
                     <h3>所有密钥</h3>
                     <div class="card-actions">
                         <input type="text" id="searchKeyword" class="form-control" placeholder="搜索密钥或客户"
-                            style="width: 300px;">
+                            style="width: 200px;" onkeypress="if(event.key==='Enter')searchLicenses()">
+                        <select id="filterStatus" class="form-control" style="width: 120px;" onchange="applyFilters()">
+                            <option value="all">全部状态</option>
+                            <option value="active">正常</option>
+                            <option value="expired">已过期</option>
+                            <option value="banned">已封禁</option>
+                        </select>
                         <button class="btn" onclick="searchLicenses()">🔍 搜索</button>
+                        <button class="btn" onclick="clearFilters()">✖️ 清除</button>
                     </div>
                 </div>
                 <div class="card-body">
+                    <!-- 批量操作栏 -->
+                    <div id="batchActionsBar" class="batch-actions-bar" style="display: none;">
+                        <div class="batch-info">
+                            已选择 <strong id="selectedCount">0</strong> 个密钥
+                        </div>
+                        <div class="batch-buttons">
+                            <button class="btn btn-warning btn-sm" onclick="batchBanLicenses()">批量封禁</button>
+                            <button class="btn btn-success btn-sm" onclick="batchUnbanLicenses()">批量解封</button>
+                            <button class="btn btn-danger btn-sm" onclick="batchDeleteLicenses()">批量删除</button>
+                            <button class="btn btn-sm" onclick="exportSelectedLicenses()">导出选中</button>
+                            <button class="btn btn-sm" onclick="clearSelection()">取消选择</button>
+                        </div>
+                    </div>
                     <div id="allLicenses"></div>
                     <div id="licensesPagination"></div>
                 </div>
@@ -487,6 +557,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="admin.js"></script>
 </body>
 
