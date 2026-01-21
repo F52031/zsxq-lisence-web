@@ -417,7 +417,7 @@ function exportTempLicensesToFile() {
     content += `2. 每个密钥最多使用 5 次任务，有效期 3 小时\n`;
     content += `3. 用完次数或过期后自动失效\n`;
     content += `4. 如需长期使用，请联系管理员获取正式授权\n`;
-    content += `\n联系方式：微信号 YOLO_SepFive\n`;
+    content += `\n联系方式：QQ号 1098831414\n`;
 
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -789,11 +789,31 @@ async function unbanLicenseAction(license) {
 // 搜索密钥
 async function searchLicenses() {
     const keyword = document.getElementById('searchKeyword').value.trim();
-    const status = document.getElementById('statusFilter').value;
+    
+    if (!keyword) {
+        showMessage('请输入搜索关键词', 'error');
+        return;
+    }
 
-    const result = await apiRequest('searchLicense', { keyword, status });
-    if (result.success) {
-        displaySearchResults(result.data);
+    // 使用客户端过滤方式搜索（获取所有密钥后在本地过滤）
+    showMessage('正在搜索...', 'success');
+    const result = await apiRequest('list', { page: 1, pageSize: 1000 });
+    
+    if (result.success && result.data && result.data.licenses) {
+        // 在客户端过滤密钥
+        const filtered = result.data.licenses.filter(lic => {
+            const lowerKeyword = keyword.toLowerCase();
+            return lic.license.toLowerCase().includes(lowerKeyword) ||
+                   lic.customer.toLowerCase().includes(lowerKeyword);
+        });
+        
+        if (filtered.length > 0) {
+            showMessage(`找到 ${filtered.length} 条匹配记录`, 'success');
+            displaySearchResults(filtered);
+        } else {
+            showMessage('未找到匹配的密钥', 'error');
+            displaySearchResults([]);
+        }
     } else {
         showMessage(result.error || '搜索失败', 'error');
     }
@@ -2475,109 +2495,146 @@ const devicePageSize = 20;
 // 加载所有设备
 async function loadAllDevices(page = 1) {
     currentDevicePage = page;
-    document.getElementById('allDevicesContainer').innerHTML = '<div class="loading">正在加载...</div>';
+    document.getElementById('allDevicesContainer').innerHTML = '<div class="loading">正在加载设备数据...</div>';
+    document.getElementById('deviceStatsGrid').innerHTML = '<div class="loading">加载中...</div>';
 
-    // 并行加载待审核和已通过列表来提取设备信息
-    const [pendingResult, approvedResult, licensesResult] = await Promise.all([
-        apiRequest('listPendingIPs', {}),
-        apiRequest('listApprovedIPs', {}),
-        apiRequest('list', { page: 1, pageSize: 1000 })
-    ]);
+    try {
+        // 并行加载所有数据源
+        const [pendingResult, approvedResult, licensesResult] = await Promise.all([
+            apiRequest('listPendingIPs', {}),
+            apiRequest('listApprovedIPs', {}),
+            apiRequest('list', { page: 1, pageSize: 1000 })
+        ]);
 
-    const deviceMap = new Map(); // 用 machineId 去重
+        const deviceMap = new Map(); // 用 machineId 去重
 
-    // 从待审核列表提取设备
-    if (pendingResult.success && pendingResult.data) {
-        pendingResult.data.forEach(item => {
-            if (item.machineIdFull) {
-                const existing = deviceMap.get(item.machineIdFull);
-                if (!existing) {
-                    deviceMap.set(item.machineIdFull, {
-                        machineId: item.machineIdFull,
-                        status: 'pending',
-                        statusText: '待审核',
-                        ips: [item.ip],
-                        licenses: [],
-                        firstSeen: item.createdAt || '-',
-                        lastSeen: item.lastSeen || '-',
-                        isBanned: false
-                    });
-                } else {
-                    if (!existing.ips.includes(item.ip)) {
-                        existing.ips.push(item.ip);
-                    }
-                }
-            }
-        });
-    }
-
-    // 从已通过列表提取设备
-    if (approvedResult.success && approvedResult.data) {
-        approvedResult.data.forEach(item => {
-            if (typeof item === 'object' && item.machineId) {
-                const existing = deviceMap.get(item.machineId);
-                if (!existing) {
-                    deviceMap.set(item.machineId, {
-                        machineId: item.machineId,
-                        status: 'approved',
-                        statusText: '已授权',
-                        ips: [item.ip],
-                        licenses: [],
-                        firstSeen: item.approvedAt || '-',
-                        lastSeen: item.lastSeen || '-',
-                        isBanned: false
-                    });
-                } else {
-                    existing.status = 'approved';
-                    existing.statusText = '已授权';
-                    if (item.ip && !existing.ips.includes(item.ip)) {
-                        existing.ips.push(item.ip);
-                    }
-                }
-            }
-        });
-    }
-
-    // 从密钥的设备列表中提取设备（需要查询每个密钥的设备）
-    if (licensesResult.success && licensesResult.data && licensesResult.data.licenses) {
-        for (const lic of licensesResult.data.licenses) {
-            // 尝试获取设备信息
-            const statusResult = await apiRequest('status', { license: lic.license });
-            if (statusResult.success && statusResult.data && statusResult.data.devices) {
-                statusResult.data.devices.forEach(device => {
-                    const existing = deviceMap.get(device.machineId);
+        // 1. 从待审核列表提取设备
+        if (pendingResult.success && pendingResult.data) {
+            pendingResult.data.forEach(item => {
+                if (item.machineIdFull) {
+                    const existing = deviceMap.get(item.machineIdFull);
                     if (!existing) {
-                        deviceMap.set(device.machineId, {
-                            machineId: device.machineId,
-                            status: device.isBanned ? 'banned' : 'active',
-                            statusText: device.isBanned ? '已封禁' : '正常',
-                            ips: device.lastIP ? [device.lastIP] : [],
-                            licenses: [lic.license],
-                            firstSeen: device.firstSeen || '-',
-                            lastSeen: device.lastSeen || '-',
-                            isBanned: device.isBanned || false
+                        deviceMap.set(item.machineIdFull, {
+                            machineId: item.machineIdFull,
+                            status: 'pending',
+                            statusText: '⏳ 待审核',
+                            ips: [item.ip],
+                            licenses: [],
+                            userName: item.note || '-',
+                            firstSeen: item.createdAt || '-',
+                            lastSeen: item.lastSeen || '-',
+                            isBanned: false
                         });
                     } else {
-                        if (!existing.licenses.includes(lic.license)) {
-                            existing.licenses.push(lic.license);
-                        }
-                        if (device.lastIP && !existing.ips.includes(device.lastIP)) {
-                            existing.ips.push(device.lastIP);
-                        }
-                        if (device.isBanned) {
-                            existing.status = 'banned';
-                            existing.statusText = '已封禁';
-                            existing.isBanned = true;
+                        if (!existing.ips.includes(item.ip)) {
+                            existing.ips.push(item.ip);
                         }
                     }
+                }
+            });
+        }
+
+        // 2. 从已通过列表提取设备
+        if (approvedResult.success && approvedResult.data) {
+            approvedResult.data.forEach(item => {
+                if (typeof item === 'object' && item.machineId) {
+                    const existing = deviceMap.get(item.machineId);
+                    if (!existing) {
+                        deviceMap.set(item.machineId, {
+                            machineId: item.machineId,
+                            status: 'approved',
+                            statusText: '✅ 已授权',
+                            ips: [item.ip],
+                            licenses: [],
+                            userName: item.note || '-',
+                            firstSeen: item.approvedAt || '-',
+                            lastSeen: item.lastSeen || '-',
+                            isBanned: false
+                        });
+                    } else {
+                        existing.status = 'approved';
+                        existing.statusText = '✅ 已授权';
+                        if (item.ip && !existing.ips.includes(item.ip)) {
+                            existing.ips.push(item.ip);
+                        }
+                        if (item.note) existing.userName = item.note;
+                    }
+                }
+            });
+        }
+
+        // 3. 从密钥列表中提取设备信息（不再逐个查询，而是从缓存的devices数据中提取）
+        if (licensesResult.success && licensesResult.data && licensesResult.data.licenses) {
+            // 批量获取所有设备信息（限制并发数）
+            const licenses = licensesResult.data.licenses.slice(0, 50); // 只查询前50个密钥，避免太慢
+            const batchSize = 5; // 每次并发5个请求
+            
+            for (let i = 0; i < licenses.length; i += batchSize) {
+                const batch = licenses.slice(i, i + batchSize);
+                const results = await Promise.all(
+                    batch.map(lic => apiRequest('status', { license: lic.license }).catch(() => ({ success: false })))
+                );
+
+                results.forEach((statusResult, idx) => {
+                    const lic = batch[idx];
+                    if (statusResult.success && statusResult.data && statusResult.data.devices) {
+                        statusResult.data.devices.forEach(device => {
+                            const existing = deviceMap.get(device.machineId);
+                            if (!existing) {
+                                deviceMap.set(device.machineId, {
+                                    machineId: device.machineId,
+                                    status: device.isBanned ? 'banned' : 'active',
+                                    statusText: device.isBanned ? '🚫 已封禁' : '✅ 正常',
+                                    ips: device.lastIP ? [device.lastIP] : [],
+                                    licenses: [lic.license],
+                                    userName: lic.customer || '-',
+                                    firstSeen: device.firstSeen || '-',
+                                    lastSeen: device.lastSeen || '-',
+                                    isBanned: device.isBanned || false
+                                });
+                            } else {
+                                if (!existing.licenses.includes(lic.license)) {
+                                    existing.licenses.push(lic.license);
+                                }
+                                if (device.lastIP && !existing.ips.includes(device.lastIP)) {
+                                    existing.ips.push(device.lastIP);
+                                }
+                                if (device.isBanned) {
+                                    existing.status = 'banned';
+                                    existing.statusText = '🚫 已封禁';
+                                    existing.isBanned = true;
+                                }
+                                if (!existing.userName || existing.userName === '-') {
+                                    existing.userName = lic.customer || '-';
+                                }
+                            }
+                        });
+                    }
                 });
+
+                // 显示加载进度
+                const progress = Math.min(100, Math.round(((i + batchSize) / licenses.length) * 100));
+                document.getElementById('allDevicesContainer').innerHTML = `<div class="loading">正在加载设备数据... ${progress}%</div>`;
             }
         }
-    }
 
-    allDevicesCache = Array.from(deviceMap.values());
-    displayDeviceStats();
-    displayAllDevicesList(allDevicesCache, page);
+        allDevicesCache = Array.from(deviceMap.values());
+        
+        // 按最后使用时间排序
+        allDevicesCache.sort((a, b) => {
+            const timeA = new Date(a.lastSeen).getTime() || 0;
+            const timeB = new Date(b.lastSeen).getTime() || 0;
+            return timeB - timeA;
+        });
+
+        displayDeviceStats();
+        displayAllDevicesList(allDevicesCache, page);
+        showMessage(`加载完成，共 ${allDevicesCache.length} 个设备`, 'success');
+    } catch (error) {
+        console.error('加载设备失败:', error);
+        document.getElementById('allDevicesContainer').innerHTML = '<div class="loading">加载失败，请重试</div>';
+        showMessage('加载设备失败: ' + error.message, 'error');
+    }
 }
 
 // 显示设备统计
@@ -2831,5 +2888,419 @@ window.showPage = function (pageId) {
     if (pageId === 'settings') {
         checkCurrentVersion();
         loadVersionHistory();
+    }
+};
+
+
+// ==================== 批量操作功能 ====================
+let selectedLicenses = new Set();
+
+// 更新显示所有密钥（添加复选框）
+function displayAllLicensesWithCheckbox(data) {
+    if (!data.licenses || data.licenses.length === 0) {
+        document.getElementById('allLicenses').innerHTML = '<div class="loading">暂无数据</div>';
+        return;
+    }
+
+    let html = '<table><thead><tr><th><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this)"></th><th>密钥</th><th>客户</th><th>过期时间</th><th>设备</th><th>状态</th><th>IP绑定</th><th>操作</th></tr></thead><tbody>';
+    data.licenses.forEach(lic => {
+        const isExpired = new Date(lic.expire) < new Date();
+        const status = lic.isBanned ? '<span class="badge badge-danger">已封禁</span>' :
+            isExpired ? '<span class="badge badge-warning">已过期</span>' :
+                '<span class="badge badge-success">正常</span>';
+
+        const ipStatus = lic.ipBindingEnabled ?
+            `<span class="badge badge-info" title="${(lic.allowedIPs || []).join(', ')}">🔒 ${(lic.allowedIPs || []).length} IP</span>` :
+            '<span class="badge badge-secondary">未启用</span>';
+
+        const banBtn = lic.isBanned ?
+            `<button class="btn btn-success btn-sm" onclick="unbanLicenseAction('${lic.license}')">解封</button>` :
+            `<button class="btn btn-warning btn-sm" onclick="banLicenseAction('${lic.license}')">封禁</button>`;
+
+        const checked = selectedLicenses.has(lic.license) ? 'checked' : '';
+
+        html += `<tr>
+            <td><input type="checkbox" class="license-checkbox" value="${lic.license}" ${checked} onchange="toggleLicenseSelection('${lic.license}', this.checked)"></td>
+            <td><span class="code">${lic.license}</span></td>
+            <td>${lic.customer}</td>
+            <td>${lic.expire}</td>
+            <td>${lic.devicesUsed} / ${lic.maxDevices}</td>
+            <td>${status}</td>
+            <td>${ipStatus}</td>
+            <td>
+                <button class="btn btn-sm" onclick="editLicense('${lic.license}')">编辑</button>
+                <button class="btn btn-sm" onclick="manageIPBindingFromList('${lic.license}')">🔒</button>
+                ${banBtn}
+                <button class="btn btn-danger btn-sm" onclick="deleteLicense('${lic.license}')">删除</button>
+            </td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    document.getElementById('allLicenses').innerHTML = html;
+    updateBatchActionsBar();
+}
+
+// 切换全选
+function toggleSelectAll(checkbox) {
+    const checkboxes = document.querySelectorAll('.license-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = checkbox.checked;
+        toggleLicenseSelection(cb.value, cb.checked);
+    });
+}
+
+// 切换单个密钥选择
+function toggleLicenseSelection(license, checked) {
+    if (checked) {
+        selectedLicenses.add(license);
+    } else {
+        selectedLicenses.delete(license);
+    }
+    updateBatchActionsBar();
+}
+
+// 更新批量操作栏
+function updateBatchActionsBar() {
+    const bar = document.getElementById('batchActionsBar');
+    const count = document.getElementById('selectedCount');
+    
+    if (selectedLicenses.size > 0) {
+        bar.style.display = 'flex';
+        count.textContent = selectedLicenses.size;
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+// 清除选择
+function clearSelection() {
+    selectedLicenses.clear();
+    const checkboxes = document.querySelectorAll('.license-checkbox');
+    checkboxes.forEach(cb => cb.checked = false);
+    const selectAll = document.getElementById('selectAllCheckbox');
+    if (selectAll) selectAll.checked = false;
+    updateBatchActionsBar();
+}
+
+// 批量封禁
+async function batchBanLicenses() {
+    if (selectedLicenses.size === 0) {
+        showMessage('请先选择要封禁的密钥', 'error');
+        return;
+    }
+
+    if (!confirm(`确定要封禁选中的 ${selectedLicenses.size} 个密钥吗？`)) return;
+
+    let success = 0;
+    let failed = 0;
+
+    for (const license of selectedLicenses) {
+        const result = await apiRequest('ban', { license });
+        if (result.success) {
+            success++;
+        } else {
+            failed++;
+        }
+    }
+
+    showMessage(`批量封禁完成：成功 ${success} 个，失败 ${failed} 个`, success > 0 ? 'success' : 'error');
+    clearSelection();
+    loadAllLicenses();
+}
+
+// 批量解封
+async function batchUnbanLicenses() {
+    if (selectedLicenses.size === 0) {
+        showMessage('请先选择要解封的密钥', 'error');
+        return;
+    }
+
+    if (!confirm(`确定要解封选中的 ${selectedLicenses.size} 个密钥吗？`)) return;
+
+    let success = 0;
+    let failed = 0;
+
+    for (const license of selectedLicenses) {
+        const result = await apiRequest('unbanLicense', { license });
+        if (result.success) {
+            success++;
+        } else {
+            failed++;
+        }
+    }
+
+    showMessage(`批量解封完成：成功 ${success} 个，失败 ${failed} 个`, success > 0 ? 'success' : 'error');
+    clearSelection();
+    loadAllLicenses();
+}
+
+// 批量删除
+async function batchDeleteLicenses() {
+    if (selectedLicenses.size === 0) {
+        showMessage('请先选择要删除的密钥', 'error');
+        return;
+    }
+
+    if (!confirm(`⚠️ 确定要删除选中的 ${selectedLicenses.size} 个密钥吗？此操作不可恢复！`)) return;
+
+    let success = 0;
+    let failed = 0;
+
+    for (const license of selectedLicenses) {
+        const result = await apiRequest('deleteLicense', { license });
+        if (result.success) {
+            success++;
+        } else {
+            failed++;
+        }
+    }
+
+    showMessage(`批量删除完成：成功 ${success} 个，失败 ${failed} 个`, success > 0 ? 'success' : 'error');
+    clearSelection();
+    loadAllLicenses();
+}
+
+// 导出选中的密钥
+function exportSelectedLicenses() {
+    if (selectedLicenses.size === 0) {
+        showMessage('请先选择要导出的密钥', 'error');
+        return;
+    }
+
+    const licenses = Array.from(selectedLicenses).join('\n');
+    const blob = new Blob([licenses], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `selected_licenses_${new Date().getTime()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    showMessage(`已导出 ${selectedLicenses.size} 个密钥`, 'success');
+}
+
+// ==================== 高级筛选功能 ====================
+let currentFilters = {
+    keyword: '',
+    status: 'all'
+};
+
+// 应用筛选
+async function applyFilters() {
+    const keyword = document.getElementById('searchKeyword').value.trim();
+    const status = document.getElementById('filterStatus').value;
+
+    currentFilters.keyword = keyword;
+    currentFilters.status = status;
+
+    showMessage('正在筛选...', 'success');
+    const result = await apiRequest('list', { page: 1, pageSize: 1000 });
+
+    if (result.success && result.data && result.data.licenses) {
+        let filtered = result.data.licenses;
+
+        // 关键词筛选
+        if (keyword) {
+            const lowerKeyword = keyword.toLowerCase();
+            filtered = filtered.filter(lic => {
+                return lic.license.toLowerCase().includes(lowerKeyword) ||
+                       lic.customer.toLowerCase().includes(lowerKeyword);
+            });
+        }
+
+        // 状态筛选
+        if (status !== 'all') {
+            filtered = filtered.filter(lic => {
+                const isExpired = new Date(lic.expire) < new Date();
+                if (status === 'active') return !lic.isBanned && !isExpired;
+                if (status === 'expired') return isExpired && !lic.isBanned;
+                if (status === 'banned') return lic.isBanned;
+                return true;
+            });
+        }
+
+        if (filtered.length > 0) {
+            showMessage(`找到 ${filtered.length} 条匹配记录`, 'success');
+            displayAllLicensesWithCheckbox({ licenses: filtered });
+        } else {
+            showMessage('未找到匹配的密钥', 'error');
+            document.getElementById('allLicenses').innerHTML = '<div class="loading">未找到匹配的密钥</div>';
+        }
+        document.getElementById('licensesPagination').innerHTML = '';
+    } else {
+        showMessage(result.error || '筛选失败', 'error');
+    }
+}
+
+// 清除筛选
+function clearFilters() {
+    document.getElementById('searchKeyword').value = '';
+    document.getElementById('filterStatus').value = 'all';
+    currentFilters = { keyword: '', status: 'all' };
+    loadAllLicenses();
+}
+
+// ==================== 仪表板数据可视化 ====================
+let licenseChart = null;
+let statusChart = null;
+
+// 加载仪表板（增强版）
+async function loadDashboardEnhanced() {
+    const result = await apiRequest('list', { page: 1, pageSize: 1000 });
+    if (result.success) {
+        displayStats(result.data);
+        displayRecentLicenses(result.data);
+        displayTodayActivity(result.data);
+        displayLicenseChart(result.data);
+        displayStatusChart(result.data);
+    }
+}
+
+// 显示今日活动
+function displayTodayActivity(data) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayTime = today.getTime();
+
+    const todayLicenses = data.licenses.filter(lic => {
+        const created = new Date(lic.created);
+        return created.getTime() >= todayTime;
+    });
+
+    let html = '';
+    if (todayLicenses.length === 0) {
+        html = '<div class="loading">今日暂无新增密钥</div>';
+    } else {
+        todayLicenses.slice(0, 10).forEach(lic => {
+            const time = new Date(lic.created).toLocaleTimeString('zh-CN');
+            html += `<div class="activity-item">
+                <div class="activity-time">${time}</div>
+                <div class="activity-text">新增密钥：<span class="code">${lic.license}</span> - ${lic.customer}</div>
+            </div>`;
+        });
+    }
+
+    document.getElementById('todayActivity').innerHTML = html;
+}
+
+// 显示密钥趋势图表
+function displayLicenseChart(data) {
+    const canvas = document.getElementById('licenseChart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+
+    // 准备最近7天的数据
+    const days = [];
+    const counts = [];
+    for (let i = 6; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        date.setHours(0, 0, 0, 0);
+        const nextDate = new Date(date);
+        nextDate.setDate(nextDate.getDate() + 1);
+
+        const dayStr = `${date.getMonth() + 1}/${date.getDate()}`;
+        days.push(dayStr);
+
+        const count = data.licenses.filter(lic => {
+            const created = new Date(lic.created);
+            return created >= date && created < nextDate;
+        }).length;
+        counts.push(count);
+    }
+
+    if (licenseChart) {
+        licenseChart.destroy();
+    }
+
+    licenseChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: days,
+            datasets: [{
+                label: '新增密钥数',
+                data: counts,
+                borderColor: '#667eea',
+                backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1
+                    }
+                }
+            }
+        }
+    });
+}
+
+// 显示状态分布图表
+function displayStatusChart(data) {
+    const canvas = document.getElementById('statusChart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+
+    const now = new Date();
+    const active = data.licenses.filter(l => !l.isBanned && new Date(l.expire) > now).length;
+    const expired = data.licenses.filter(l => !l.isBanned && new Date(l.expire) <= now).length;
+    const banned = data.licenses.filter(l => l.isBanned).length;
+
+    if (statusChart) {
+        statusChart.destroy();
+    }
+
+    statusChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['正常', '已过期', '已封禁'],
+            datasets: [{
+                data: [active, expired, banned],
+                backgroundColor: [
+                    '#28a745',
+                    '#ffc107',
+                    '#dc3545'
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+}
+
+// 重写 loadDashboard 函数
+const originalLoadDashboard = loadDashboard;
+loadDashboard = function() {
+    loadDashboardEnhanced();
+};
+
+// 重写 loadAllLicenses 函数以使用新的显示方式
+const originalLoadAllLicenses = loadAllLicenses;
+loadAllLicenses = async function(page = 1) {
+    currentPage = page;
+    const result = await apiRequest('list', { page, pageSize: 20 });
+    if (result.success) {
+        displayAllLicensesWithCheckbox(result.data);
+        displayLicensesPagination(result.data);
     }
 };
