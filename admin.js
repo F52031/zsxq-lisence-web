@@ -632,13 +632,128 @@ async function registerLicense() {
     }
 }
 
+// 批量生成密钥
+let batchGeneratedLicenses = []; // 存储批量生成的密钥
+
+async function batchGenerateLicenses() {
+    const count = parseInt(document.getElementById('batchCount').value);
+    const customerPrefix = document.getElementById('batchCustomerPrefix').value.trim();
+    const expireDate = document.getElementById('batchExpireDate').value;
+    const maxDevices = parseInt(document.getElementById('batchMaxDevices').value);
+
+    if (!customerPrefix || !expireDate) {
+        showMessage('请填写所有信息', 'error');
+        return;
+    }
+
+    if (count < 1 || count > 100) {
+        showMessage('生成数量必须在 1-100 之间', 'error');
+        return;
+    }
+
+    if (!confirm(`确定要批量生成 ${count} 个密钥吗？`)) return;
+
+    showMessage('正在批量生成密钥...', 'info');
+
+    const licenses = [];
+    const expireTime = new Date(expireDate + ' 23:59:59').getTime();
+    const createdTime = Date.now();
+
+    // 生成密钥
+    for (let i = 1; i <= count; i++) {
+        const license = generateLicense();
+        const customerName = `${customerPrefix}${String(i).padStart(3, '0')}`; // 例如：用户001
+        licenses.push({
+            license,
+            customer: customerName,
+            expire: expireTime,
+            maxDevices,
+            created: createdTime
+        });
+    }
+
+    // 批量注册
+    const result = await apiRequest('register', { licenses });
+
+    if (result.success) {
+        batchGeneratedLicenses = licenses;
+        
+        // 显示结果
+        document.getElementById('batchGenerateResult').style.display = 'block';
+        document.getElementById('batchGenerateStatus').innerHTML = `
+            <span style="color: #28a745; font-size: 16px;">✅ 成功生成并注册 ${count} 个密钥</span>
+        `;
+        
+        // 显示密钥列表
+        let html = '<table style="width: 100%; font-size: 12px;"><thead><tr><th>序号</th><th>密钥</th><th>客户名称</th><th>设备数</th></tr></thead><tbody>';
+        licenses.forEach((item, index) => {
+            html += `<tr>
+                <td>${index + 1}</td>
+                <td><span class="code">${item.license}</span></td>
+                <td>${item.customer}</td>
+                <td>${item.maxDevices} 台</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        document.getElementById('batchGenerateList').innerHTML = html;
+        
+        showMessage(`批量生成成功！已生成 ${count} 个密钥`, 'success');
+        loadAllLicenses();
+    } else {
+        showMessage(result.error || '批量生成失败', 'error');
+    }
+}
+
+// 复制批量生成的密钥
+function copyBatchLicenses() {
+    if (batchGeneratedLicenses.length === 0) {
+        showMessage('没有可复制的密钥', 'error');
+        return;
+    }
+
+    const text = batchGeneratedLicenses.map(item => 
+        `${item.customer}\t${item.license}\t${item.maxDevices}台`
+    ).join('\n');
+
+    navigator.clipboard.writeText(text).then(() => {
+        showMessage('已复制到剪贴板', 'success');
+    }).catch(() => {
+        showMessage('复制失败，请手动复制', 'error');
+    });
+}
+
+// 导出批量生成的密钥为文本文件
+function exportBatchLicenses() {
+    if (batchGeneratedLicenses.length === 0) {
+        showMessage('没有可导出的密钥', 'error');
+        return;
+    }
+
+    const text = '客户名称\t密钥\t最大设备数\n' + 
+        batchGeneratedLicenses.map(item => 
+            `${item.customer}\t${item.license}\t${item.maxDevices}台`
+        ).join('\n');
+
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `批量密钥_${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    showMessage('导出成功', 'success');
+}
+
 // 加载所有密钥
 let currentPage = 1;
 async function loadAllLicenses(page = 1) {
     currentPage = page;
     const result = await apiRequest('list', { page, pageSize: 20 });
     if (result.success) {
-        displayAllLicenses(result.data);
+        displayAllLicensesWithCheckbox(result.data);
         displayLicensesPagination(result.data);
     }
 }
@@ -989,74 +1104,187 @@ function showImportDialog() {
 // 加载操作日志
 let currentLogsPage = 1;
 const logsPageSize = 50;
-let currentIPFilter = ''; // 当前 IP 过滤条件
+let currentLogSearchType = ''; // 当前搜索类型：ip/license/machineId/userName
+let currentLogSearchValue = ''; // 当前搜索值
+let currentIPFilter = ''; // 当前IP过滤器（用于判断是否显示搜索按钮）
 
 async function loadLogs(page = 1) {
     currentLogsPage = page;
 
     const params = { page: page, pageSize: logsPageSize };
     
-    // 如果有 IP 过滤条件，添加到请求参数
-    if (currentIPFilter) {
-        params.ip = currentIPFilter;
+    // 根据搜索类型添加对应的过滤参数
+    // 注意：密钥和设备ID搜索不使用后端过滤，因为后端是模糊匹配
+    if (currentLogSearchType && currentLogSearchValue) {
+        switch (currentLogSearchType) {
+            case 'ip':
+                params.ipFilter = currentLogSearchValue;
+                break;
+            case 'license':
+                // 密钥搜索：不使用后端过滤，在前端精确匹配
+                break;
+            case 'machineId':
+                // 设备ID搜索：不使用后端过滤，在前端精确匹配
+                break;
+            case 'userName':
+                // 用户名搜索：需要从缓存中找到对应的IP或设备ID
+                const ips = [];
+                const machineIds = [];
+                
+                // 从IP缓存中查找
+                globalUserData.ipToInfo.forEach((info, ip) => {
+                    if (info.userName === currentLogSearchValue) {
+                        ips.push(ip);
+                    }
+                });
+                
+                // 从设备ID缓存中查找
+                globalUserData.machineIdToInfo.forEach((info, machineId) => {
+                    if (info.userName === currentLogSearchValue) {
+                        machineIds.push(machineId);
+                    }
+                });
+                
+                // 如果找到了，使用第一个IP或设备ID进行过滤
+                if (ips.length > 0) {
+                    params.ipFilter = ips[0];
+                } else if (machineIds.length > 0) {
+                    params.machineIdFilter = machineIds[0];
+                }
+                break;
+        }
     }
 
     const logsResult = await apiRequest('getLogs', params);
 
     if (logsResult.success) {
-        displayLogs(logsResult.data, logsResult.total || 0);
+        let filteredLogs = logsResult.data;
+        let filteredTotal = logsResult.total || 0;
+        
+        // 如果是密钥或设备ID搜索，在前端做精确匹配过滤
+        if (currentLogSearchType && currentLogSearchValue && logsResult.data) {
+            if (currentLogSearchType === 'license') {
+                // 密钥精确匹配
+                filteredLogs = logsResult.data.filter(log => log.license === currentLogSearchValue);
+                filteredTotal = filteredLogs.length;
+            } else if (currentLogSearchType === 'machineId') {
+                // 设备ID精确匹配
+                filteredLogs = logsResult.data.filter(log => log.machineId === currentLogSearchValue);
+                filteredTotal = filteredLogs.length;
+            }
+        }
+        
+        displayLogs(filteredLogs, filteredTotal);
         
         // 显示搜索信息
-        if (currentIPFilter) {
+        if (currentLogSearchType && currentLogSearchValue) {
+            const typeNames = {
+                ip: 'IP 地址',
+                license: '密钥',
+                machineId: '设备ID',
+                userName: '用户名'
+            };
             document.getElementById('logsSearchInfo').style.display = 'block';
-            document.getElementById('logsSearchText').textContent = `🔍 正在显示 IP: ${currentIPFilter} 的操作记录 (共 ${logsResult.total || 0} 条)`;
+            document.getElementById('logsSearchText').textContent = `🔍 正在显示 ${typeNames[currentLogSearchType]}: ${currentLogSearchValue} 的操作记录 (共 ${logsResult.total || 0} 条)`;
         } else {
             document.getElementById('logsSearchInfo').style.display = 'none';
         }
     }
 }
 
-// 按 IP 搜索日志
-async function searchLogsByIP() {
-    const ip = document.getElementById('ipSearchInput').value.trim();
+// 搜索日志（支持多种类型）
+async function searchLogs() {
+    const searchType = document.getElementById('logSearchType').value;
+    const searchValue = document.getElementById('logSearchInput').value.trim();
     
-    if (!ip) {
-        showMessage('请输入 IP 地址', 'error');
+    if (!searchValue) {
+        showMessage('请输入搜索内容', 'error');
         return;
     }
     
-    // 简单的 IP 格式验证
-    const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
-    if (!ipPattern.test(ip)) {
-        showMessage('请输入有效的 IP 地址格式 (例如: 192.168.1.1)', 'error');
-        return;
+    // IP 格式验证
+    if (searchType === 'ip') {
+        const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+        if (!ipPattern.test(searchValue)) {
+            showMessage('请输入有效的 IP 地址格式 (例如: 192.168.1.1)', 'error');
+            return;
+        }
     }
     
-    currentIPFilter = ip;
+    currentLogSearchType = searchType;
+    currentLogSearchValue = searchValue;
     currentLogsPage = 1;
+    
+    // 如果是IP搜索，更新currentIPFilter
+    if (searchType === 'ip') {
+        currentIPFilter = searchValue;
+    } else {
+        currentIPFilter = '';
+    }
+    
     await loadLogs(1);
-    showMessage(`正在搜索 IP: ${ip} 的操作记录`, 'success');
+    
+    const typeNames = {
+        ip: 'IP 地址',
+        license: '密钥',
+        machineId: '设备ID',
+        userName: '用户名'
+    };
+    showMessage(`正在搜索 ${typeNames[searchType]}: ${searchValue} 的操作记录`, 'success');
 }
 
-// 清除 IP 搜索
-async function clearIPSearch() {
+// 清除搜索
+async function clearLogSearch() {
+    currentLogSearchType = '';
+    currentLogSearchValue = '';
     currentIPFilter = '';
-    document.getElementById('ipSearchInput').value = '';
+    document.getElementById('logSearchInput').value = '';
     document.getElementById('logsSearchInfo').style.display = 'none';
     currentLogsPage = 1;
     await loadLogs(1);
     showMessage('已清除搜索条件', 'success');
 }
 
-// 快速搜索 IP（从日志列表中点击）
-async function quickSearchIP(ip) {
-    document.getElementById('ipSearchInput').value = ip;
-    currentIPFilter = ip;
+// 快速搜索（从日志列表中点击）
+async function quickSearchLog(type, value) {
+    document.getElementById('logSearchType').value = type;
+    document.getElementById('logSearchInput').value = value;
+    currentLogSearchType = type;
+    currentLogSearchValue = value;
     currentLogsPage = 1;
+    
+    // 如果是IP搜索，更新currentIPFilter
+    if (type === 'ip') {
+        currentIPFilter = value;
+    } else {
+        currentIPFilter = '';
+    }
+    
     await loadLogs(1);
-    showMessage(`正在搜索 IP: ${ip} 的操作记录`, 'success');
+    
+    const typeNames = {
+        ip: 'IP 地址',
+        license: '密钥',
+        machineId: '设备ID',
+        userName: '用户名'
+    };
+    showMessage(`正在搜索 ${typeNames[type]}: ${value} 的操作记录`, 'success');
     // 滚动到顶部
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// 兼容旧的函数名（保持向后兼容）
+async function searchLogsByIP() {
+    document.getElementById('logSearchType').value = 'ip';
+    await searchLogs();
+}
+
+async function clearIPSearch() {
+    await clearLogSearch();
+}
+
+async function quickSearchIP(ip) {
+    await quickSearchLog('ip', ip);
 }
 
 // 显示操作日志
@@ -1089,14 +1317,30 @@ function displayLogs(logs, total) {
         const machineIdDisplay = log.machineId ? log.machineId.substring(0, 8) + '...' : '-';
         const machineIdTitle = log.machineId || '';
 
-        // 用户名优先级：IP 备注/用户名 > 设备 ID 用户名 > 默认
-        let userName = getUserNameByIP(log.ip) || getUserNameByMachineId(log.machineId) || '-';
-        if (userName !== '-') {
-            userName = `<strong>${userName}</strong>`;
-        }
-
         // 功能名称
         const featureName = log.feature || '-';
+
+        // 用户名列：显示用户名 + 快速搜索按钮
+        let userNameCell = '-';
+        const rawUserName = getUserNameByIP(log.ip) || getUserNameByMachineId(log.machineId);
+        if (rawUserName) {
+            userNameCell = `<strong>${rawUserName}</strong>`;
+            userNameCell += ` <button class="btn btn-sm" onclick="quickSearchLog('userName', '${rawUserName}')" title="搜索此用户的所有记录" style="padding: 2px 6px; font-size: 11px;">🔍</button>`;
+        }
+
+        // 密钥列：显示密钥 + 快速搜索按钮
+        let licenseCell = '-';
+        if (log.license) {
+            licenseCell = `<span class="code">${log.license}</span>`;
+            licenseCell += ` <button class="btn btn-sm" onclick="quickSearchLog('license', '${log.license}')" title="搜索此密钥的所有记录" style="padding: 2px 6px; font-size: 11px;">🔍</button>`;
+        }
+
+        // 设备ID列：显示设备ID + 快速搜索按钮
+        let machineIdCell = '-';
+        if (log.machineId) {
+            machineIdCell = `<span class="code" title="${machineIdTitle}">${machineIdDisplay}</span>`;
+            machineIdCell += ` <button class="btn btn-sm" onclick="quickSearchLog('machineId', '${log.machineId}')" title="搜索此设备的所有记录" style="padding: 2px 6px; font-size: 11px;">🔍</button>`;
+        }
 
         // IP 列：显示 IP + 快速搜索按钮
         let ipCell = '-';
@@ -1112,9 +1356,9 @@ function displayLogs(logs, total) {
             <td>${log.timestamp}</td>
             <td>${log.action}</td>
             <td>${featureName}</td>
-            <td>${userName}</td>
-            <td><span class="code">${log.license || '-'}</span></td>
-            <td>${log.machineId ? '<span class="code" title="' + machineIdTitle + '">' + machineIdDisplay + '</span>' : '-'}</td>
+            <td>${userNameCell}</td>
+            <td>${licenseCell}</td>
+            <td>${machineIdCell}</td>
             <td>${ipCell}</td>
         </tr>`;
     });
@@ -3158,6 +3402,48 @@ function exportSelectedLicenses() {
     URL.revokeObjectURL(url);
 
     showMessage(`已导出 ${selectedLicenses.size} 个密钥`, 'success');
+}
+
+// 导出所有密钥
+async function exportAllLicenses() {
+    if (!confirm('确定要导出所有密钥吗？这可能需要一些时间。')) return;
+
+    showMessage('正在获取所有密钥...', 'info');
+
+    // 获取所有密钥（不分页）
+    const result = await apiRequest('list', { page: 1, pageSize: 10000 });
+    
+    if (!result.success || !result.data.licenses || result.data.licenses.length === 0) {
+        showMessage('没有可导出的密钥', 'error');
+        return;
+    }
+
+    const licenses = result.data.licenses;
+    
+    // 生成CSV格式的内容
+    let csvContent = '密钥\t客户名称\t过期时间\t最大设备数\t已用设备\t状态\tIP绑定\t创建时间\n';
+    
+    licenses.forEach(lic => {
+        const isExpired = new Date(lic.expire) < new Date();
+        const status = lic.isBanned ? '已封禁' : isExpired ? '已过期' : '正常';
+        const ipBinding = lic.ipBindingEnabled ? `已启用(${(lic.allowedIPs || []).length}个IP)` : '未启用';
+        const created = lic.created ? new Date(lic.created).toLocaleString('zh-CN') : '-';
+        
+        csvContent += `${lic.license}\t${lic.customer}\t${lic.expire}\t${lic.maxDevices}\t${lic.devicesUsed || 0}\t${status}\t${ipBinding}\t${created}\n`;
+    });
+
+    // 创建并下载文件
+    const blob = new Blob([csvContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `所有密钥_${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showMessage(`已导出 ${licenses.length} 个密钥`, 'success');
 }
 
 // ==================== 高级筛选功能 ====================
