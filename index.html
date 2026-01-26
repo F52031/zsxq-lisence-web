@@ -213,37 +213,91 @@
                     <h3>注册正式密钥</h3>
                 </div>
                 <div class="card-body">
-                    <div class="form-row">
-                        <button class="btn btn-primary" onclick="generateNewLicense()">🎲 生成密钥</button>
-                        <input type="text" id="newLicense" class="form-control" readonly placeholder="点击生成密钥">
+                    <!-- 单个生成 -->
+                    <div style="margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #e0e0e0;">
+                        <h4 style="margin-bottom: 15px;">单个生成</h4>
+                        <div class="form-row">
+                            <button class="btn btn-primary" onclick="generateNewLicense()">🎲 生成密钥</button>
+                            <input type="text" id="newLicense" class="form-control" readonly placeholder="点击生成密钥">
+                        </div>
+
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>客户名称</label>
+                                <input type="text" id="customer" class="form-control" value="星球助手">
+                            </div>
+
+                            <div class="form-group">
+                                <label>过期时间</label>
+                                <input type="date" id="expireDate" class="form-control" value="2049-12-31">
+                            </div>
+
+                            <div class="form-group">
+                                <label>最大设备数</label>
+                                <select id="maxDevices" class="form-control">
+                                    <option value="1">1 台</option>
+                                    <option value="2">2 台</option>
+                                    <option value="3">3 台</option>
+                                    <option value="5">5 台</option>
+                                    <option value="10">10 台</option>
+                                    <option value="100" selected>100 台</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-success" onclick="registerLicense()">✅ 注册密钥</button>
+                        <p class="hint">💡 客户首次激活时会自动绑定 IP</p>
                     </div>
 
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label>客户名称</label>
-                            <input type="text" id="customer" class="form-control" value="星球助手">
+                    <!-- 批量生成 -->
+                    <div>
+                        <h4 style="margin-bottom: 15px;">批量生成</h4>
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>生成数量</label>
+                                <input type="number" id="batchCount" class="form-control" value="10" min="1" max="100">
+                                <p class="hint">1-100个</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label>客户名称前缀</label>
+                                <input type="text" id="batchCustomerPrefix" class="form-control" value="用户" placeholder="例如：用户">
+                                <p class="hint">将自动添加编号</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label>过期时间</label>
+                                <input type="date" id="batchExpireDate" class="form-control" value="2049-12-31">
+                            </div>
+
+                            <div class="form-group">
+                                <label>最大设备数</label>
+                                <select id="batchMaxDevices" class="form-control">
+                                    <option value="1">1 台</option>
+                                    <option value="2">2 台</option>
+                                    <option value="3">3 台</option>
+                                    <option value="5">5 台</option>
+                                    <option value="10">10 台</option>
+                                    <option value="100" selected>100 台</option>
+                                </select>
+                            </div>
                         </div>
 
-                        <div class="form-group">
-                            <label>过期时间</label>
-                            <input type="date" id="expireDate" class="form-control" value="2049-12-31">
-                        </div>
-
-                        <div class="form-group">
-                            <label>最大设备数</label>
-                            <select id="maxDevices" class="form-control">
-                                <option value="1">1 台</option>
-                                <option value="2">2 台</option>
-                                <option value="3">3 台</option>
-                                <option value="5">5 台</option>
-                                <option value="10">10 台</option>
-                                <option value="100" selected>100 台</option>
-                            </select>
+                        <button class="btn btn-success" onclick="batchGenerateLicenses()">🎫 批量生成密钥</button>
+                        <p class="hint">💡 批量生成的密钥会自动注册，客户名称格式：前缀+编号（如：用户001、用户002...）</p>
+                        
+                        <div id="batchGenerateResult" style="margin-top: 20px; display: none;">
+                            <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; margin-bottom: 10px;">
+                                <strong>生成结果：</strong>
+                                <div id="batchGenerateStatus" style="margin-top: 10px;"></div>
+                            </div>
+                            <div style="max-height: 300px; overflow-y: auto; background: white; border: 1px solid #ddd; border-radius: 4px; padding: 10px;">
+                                <div id="batchGenerateList"></div>
+                            </div>
+                            <button class="btn btn-sm" onclick="copyBatchLicenses()" style="margin-top: 10px;">📋 复制所有密钥</button>
+                            <button class="btn btn-sm" onclick="exportBatchLicenses()" style="margin-top: 10px;">💾 导出为文本</button>
                         </div>
                     </div>
-
-                    <button class="btn btn-success" onclick="registerLicense()">✅ 注册密钥</button>
-                    <p class="hint">💡 客户首次激活时会自动绑定 IP</p>
                 </div>
             </div>
 
@@ -261,6 +315,7 @@
                         </select>
                         <button class="btn" onclick="searchLicenses()">🔍 搜索</button>
                         <button class="btn" onclick="clearFilters()">✖️ 清除</button>
+                        <button class="btn btn-success" onclick="exportAllLicenses()">📥 导出全部</button>
                     </div>
                 </div>
                 <div class="card-body">
@@ -387,10 +442,16 @@
                 <div class="card-header">
                     <h3>操作日志</h3>
                     <div class="card-actions">
-                        <input type="text" id="ipSearchInput" class="form-control" placeholder="输入 IP 地址搜索"
-                            style="width: 250px;" onkeypress="if(event.key==='Enter')searchLogsByIP()">
-                        <button class="btn btn-primary" onclick="searchLogsByIP()">🔍 搜索 IP</button>
-                        <button class="btn" onclick="clearIPSearch()">✖️ 清除</button>
+                        <select id="logSearchType" class="form-control" style="width: 120px;">
+                            <option value="ip">IP 地址</option>
+                            <option value="license">密钥</option>
+                            <option value="machineId">设备ID</option>
+                            <option value="userName">用户名</option>
+                        </select>
+                        <input type="text" id="logSearchInput" class="form-control" placeholder="输入搜索内容"
+                            style="width: 250px;" onkeypress="if(event.key==='Enter')searchLogs()">
+                        <button class="btn btn-primary" onclick="searchLogs()">🔍 搜索</button>
+                        <button class="btn" onclick="clearLogSearch()">✖️ 清除</button>
                         <button class="btn" onclick="loadLogs()">🔄 刷新</button>
                     </div>
                 </div>
